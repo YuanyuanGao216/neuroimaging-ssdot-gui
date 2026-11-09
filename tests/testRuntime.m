@@ -2,6 +2,15 @@ function tests=testRuntime(), tests=functiontests(localfunctions); end
 function setupOnce(~)
     addpath(fullfile(fileparts(fileparts(mfilename('fullpath'))),'src'));
 end
+function testCostDependsOnDimensionsAndResources(t)
+    item=struct('rows',1e6,'compressedRows',1800,'imageColumns',6912,'nuisanceColumns',1000, ...
+        'hostFits',true,'gpuFits',true,'diskFits',true);
+    small=ssdot.app.estimateBatchCost([item item],item,2); verifyFalse(t,small.requiresConfirmation);
+    huge=item; huge.compressedRows=18000; huge.imageColumns=69000;
+    expensive=ssdot.app.estimateBatchCost(huge,item,2); verifyTrue(t,expensive.requiresConfirmation);
+    verifyGreaterThan(t,expensive.totalSeconds,small.totalSeconds);
+    huge=item; huge.hostFits=false; verifyTrue(t,ssdot.app.estimateBatchCost(huge,item,2).requiresConfirmation);
+end
 function testBoundedPreparationAndChangedFiles(t)
     cache=ssdot.io.SharedCache(1000); cache.put('a',ones(100,1)); cache.put('b',ones(100,1));
     [~,found]=cache.get('a'); verifyFalse(t,found); verifyLessThanOrEqual(t,cache.bytes,1000);
