@@ -24,7 +24,7 @@ classdef GUIController < handle
             rootDir = fileparts(appDir);
             
             addpath(genpath(fullfile(rootDir, 'code')));
-            addpath(genpath(fullfile(rootDir, 'homer_function')));
+            addpath(genpath(fullfile(rootDir, 'external', 'homer')));
             
             obj.ssdot = ssdotClass();
             assignin('base', 'ssdot', obj.ssdot);

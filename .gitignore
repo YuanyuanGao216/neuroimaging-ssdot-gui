@@ -1,1 +1,11 @@
-.asv
+*.asv
+.DS_Store
+*.log
+results/
+*.partial
+local.settings.mat
+# Local editor/OS metadata and Python bytecode are not project inputs.
+.idea/
+Thumbs.db
+__pycache__/
+*.py[cod]

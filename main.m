@@ -2,7 +2,7 @@ clear all
 close all
 % clc
 addpath(genpath('code'))
-addpath(genpath('homer_function'))
+addpath(genpath(fullfile('external','homer')))
 
 cfg.mask_threshold = -2;
 cfg.threshold_brain = 5;
