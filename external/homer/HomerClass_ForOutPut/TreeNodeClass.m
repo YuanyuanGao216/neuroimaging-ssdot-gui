@@ -1,7 +1,7 @@
 classdef TreeNodeClass < handle
 
     properties (Access = public)
-        ssdot ssdotClass
+        ssdot % Untyped historical slot; SS-DOT app state is managed separately.
     end
     
     properties % (Access = private)
