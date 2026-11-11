@@ -56,6 +56,50 @@ function testInconsistentNuisanceMetadataIsRejected(t)
     [model,o,cfg]=fixture(); o.nuisanceTemporal.short{1}=flipud(o.nuisanceTemporal.short{1});
     verifyError(t,@()ssdot.recon.reconstructImage(model,o,cfg),'SSDOT:InverseAccuracy');
 end
+function testObjectiveAgreementUsesScaleAwareRoundoffAndRejectsCorruption(t)
+    for scale=[1e-12 1 1e12]
+        check=ssdot.recon.verifyObjectiveAgreement(1e-30*scale^2,2e-30*scale^2,scale,scale,1000,1e-15);
+        verifyLessThanOrEqual(t,check.normDifference,check.normTolerance);
+        verifyError(t,@()ssdot.recon.verifyObjectiveAgreement(1e-8*scale^2,1.1e-8*scale^2,scale,scale,1000,1e-15),'SSDOT:CompressionAccuracy');
+        % A near-zero objective must not conceal a discrepancy of 1e-8 of
+        % the data norm, even across very different measurement scales.
+        verifyError(t,@()ssdot.recon.verifyObjectiveAgreement(0,1e-16*scale^2,scale,scale,1000,1e-15),'SSDOT:CompressionAccuracy');
+    end
+    check=ssdot.recon.verifyObjectiveAgreement(0,0,0,0,10,0);
+    verifyEqual(t,check.normDifference,0); verifyEqual(t,check.normTolerance,0);
+    verifyError(t,@()ssdot.recon.verifyObjectiveAgreement(1,NaN,1,1,10,0),'MATLAB:expectedFinite');
+end
+function testCorruptedCompressedOperatorsAreRejected(t)
+    [model,o,cfg]=fixture(); f=ssdot.recon.factorDesign(model,'cpu'); original=ssdot.recon.compressDesign(f,o,cfg);
+    for variant=1:3
+        altered=original;
+        if variant==1, altered.image(:,1)=-altered.image(:,1);
+        elseif variant==2, altered.nuisance(:,1)=altered.nuisance(:,1)+0.2*altered.image(:,1);
+        else, altered.response(1)=altered.response(1)+0.2; end
+        [b,~,~,d]=ssdot.recon.solveCompressed(altered,cfg);
+        prediction=ssdot.recon.applyFactorizedDesign(f,o,b(:),false);r=prediction-o.response;
+        penalties=[d.imagePenalty*ones(f.imageColumns,1);d.nuisancePenalty*ones(numel(b)-f.imageColumns,1)];
+        objective=sum(r.^2)+sum(penalties.*b(:).^2);
+        verifyError(t,@()ssdot.recon.verifyObjectiveAgreement(objective,d.objective,norm(o.response),norm(prediction), ...
+            max([f.timeCount,f.channels,[f.parts.kernelCount],[f.parts.width]]),original.subspaceResidual),'SSDOT:CompressionAccuracy');
+    end
+end
+function testZeroAndNearlyExactObservations(t)
+    [model,o,cfg]=fixture();f=ssdot.recon.factorDesign(model,'cpu');
+    for scale=[0 1e-12 1 1e12]
+        % A nuisance-only observation is exactly representable; no signal or
+        % model equations are altered by the objective comparison.
+        coeff=zeros(f.imageColumns+size(o.shortRegressors,2)+size(o.driftRegressors,2),1);
+        coeff(f.imageColumns+1)=scale;
+        o.response=ssdot.recon.applyFactorizedDesign(f,o,coeff,false);
+        n=f.channels*f.timeCount;
+        o.od.w1=reshape(o.response(1:n),f.channels,f.timeCount);
+        o.od.w2=reshape(o.response(n+1:end),f.channels,f.timeCount);
+        result=ssdot.recon.reconstructImage(model,o,cfg);
+        verifyLessThanOrEqual(t,result.solverDiagnostics.objectiveNormDifference,result.solverDiagnostics.objectiveNormTolerance);
+        if scale==0,verifyEqual(t,result.hbo,zeros(size(result.hbo)));verifyEqual(t,result.hbr,zeros(size(result.hbr)));end
+    end
+end
 function [model,o,cfg]=fixture()
     rng(8); n=3; nt=48;
     G=struct('G_brain',rand(2,4),'G_scalp',rand(2,3));

@@ -16,7 +16,8 @@ function result = reconstructImage(model, observations, config, progress)
         [b,normalVector,normalMatrix,diagnostics]=ssdot.recon.solveCompressed(system,config,progress);
         times.inverse=toc(phase); phase=tic;
         if ~isempty(progress), progress("Original-space accuracy check",0,0); end
-        residual=ssdot.recon.applyFactorizedDesign(factors,observations,b(:),false)-observations.response;
+        prediction=ssdot.recon.applyFactorizedDesign(factors,observations,b(:),false);
+        residual=prediction-observations.response;
         penalties=[diagnostics.imagePenalty*ones(factors.imageColumns,1); ...
             diagnostics.nuisancePenalty*ones(numel(b)-factors.imageColumns,1)];
         if config.regularization~=3
@@ -28,8 +29,14 @@ function result = reconstructImage(model, observations, config, progress)
             penalties(:)=0;
         end
         diagnostics.originalObjective=sum(system.precisionWeights.*residual.^2)+sum(penalties.*b(:).^2);
-        diagnostics.objectiveAgreement=abs(diagnostics.originalObjective-diagnostics.objective)/max(diagnostics.originalObjective,realmin);
-        assert(diagnostics.objectiveAgreement<1e-10,'SSDOT:CompressionAccuracy','Compressed and original-space objectives disagree.');
+        weights=sqrt(system.precisionWeights);
+        operationLength=max([factors.timeCount,factors.channels,[factors.parts.kernelCount],[factors.parts.width]]);
+        agreement=ssdot.recon.verifyObjectiveAgreement(diagnostics.originalObjective,diagnostics.objective, ...
+            norm(weights.*observations.response),norm(weights.*prediction),operationLength,system.subspaceResidual);
+        diagnostics.objectiveAgreement=agreement.relativeObjectiveDifference;
+        diagnostics.objectiveNormDifference=agreement.normDifference;
+        diagnostics.objectiveNormTolerance=agreement.normTolerance;
+        diagnostics.objectiveRoundoffNormBound=agreement.roundoffNormBound;
         times.accuracyCheck=toc(phase);
         clear system factors
     else
