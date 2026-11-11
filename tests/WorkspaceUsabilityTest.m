@@ -1,260 +1,291 @@
 classdef WorkspaceUsabilityTest < matlab.uitest.TestCase
+    %WORKSPACEUSABILITYTEST End-to-end gestures on the real window with ST001.
+    % File and folder choices are injected through controller.chooser; no OS dialog is driven.
     properties
         root
     end
     methods (TestClassSetup)
         function configure(t)
-            t.root=fileparts(fileparts(mfilename('fullpath'))); addpath(t.root);
+            t.root = fileparts(fileparts(mfilename('fullpath'))); addpath(t.root);
         end
     end
     methods (Test)
-        function datasetLoadingShowsProgress(t)
-            app=main(); t.addTeardown(@()delete(app));
-            monitor=timer('ExecutionMode','fixedSpacing','Period',0.05,'BusyMode','drop', ...
-                'UserData',struct('samples',struct([]),'cancelSent',false), ...
-                'TimerFcn',@(source,~)WorkspaceUsabilityTest.observeDatasetLoading(source,app,false));
-            t.addTeardown(@()WorkspaceUsabilityTest.deleteTimer(monitor)); start(monitor);
-            t.chooseDialog("uigetdir",@()t.press(app.loadButton),Folder=fullfile(t.root,'ST001')); stop(monitor);
-            samples=monitor.UserData.samples; t.assertNotEmpty(samples);
-            t.verifyTrue(all([samples.animated])); t.verifyTrue(all([samples.controlsDisabled]));
-            t.verifyTrue(all([samples.figures]==1)); t.verifyTrue(any([samples.progress]>0));
-            t.verifyTrue(all(diff([samples.progress])>=0));
-            t.verifyEmpty(app.controller.lastError); t.verifyFalse(app.controller.busy);
-            t.verifyEmpty(app.controller.loadDialog); t.verifyEmpty(app.controller.clockTimer);
-            t.verifyEqual(app.progressGauge.Value,100); t.verifyEqual(numel(app.controller.runs),3);
-            t.verifyTrue(contains(string(app.progressLabel.Text),'Dataset ready'));
-            t.verifyEqual(string(app.loadButton.Enable),"on");
+        function openingAndBrowsingNeverCompute(t)
+            app = t.newApp(); controller = app.controller;
+            t.verifyEqual(string(app.runButton.Enable),"off");
+            t.verifyTrue(contains(string(app.readinessLabel.Text),'Open a dataset'));
+            t.press(app.loadButton);
+            t.verifyEmpty(controller.lastError); t.verifyFalse(controller.busy);
+            t.verifyEmpty(controller.loadDialog); t.verifyEmpty(controller.clockTimer);
+            t.verifyEqual(numel(controller.runs),3); t.verifyEqual(app.tabGroup.SelectedTab,app.tabs.overview);
+            t.verifyEqual(string(app.runButton.Enable),"on");
+            t.verifyTrue(contains(string(app.readinessLabel.Text),'Ready'));
+            t.verifyEqual(string(app.recordingTable.Data(:,6)),repmat("Not run",3,1));
+            t.verifyTrue(all(startsWith(string(app.recordingTable.Data(:,5)),"0 (")));
+            % Selecting recordings and visiting every view is display-only.
+            for index = [2 3 1]
+                t.choose(app.recordingDropDown,string(app.recordingDropDown.Items{index}));
+                for title = ["Signals","Results","ROI","Model","Average","Settings","Log","Overview"]
+                    t.choose(app.tabGroup,title);
+                end
+            end
+            t.choose(app.profileDropDown,"Preview (coarse software check)");
+            t.choose(app.scopeDropDown,"Shown recording only");
+            t.choose(app.tabGroup,"Settings"); t.type(app.settings.alpha,0.02);
+            t.verifyEqual(controller.cacheStatistics.solves,0); t.verifyEqual(controller.cacheStatistics.roiCalculations,0);
+            t.verifyEqual(controller.sharedCache.modelLoads,0,'Browsing must not even read the forward model.');
+            t.verifyTrue(all(arrayfun(@(state)isempty(state.result),controller.allStates())));
+            t.verifyEmpty(controller.lastError); t.verifyEqual(numel(findall(groot,'Type','figure')),1);
         end
-        function datasetLoadingFailureAndCancelRecover(t)
-            app=t.loadRecording(); previousGroup=app.controller.group; previousNode=app.controller.selectedNode;
-            previous=ssdot.io.readRun(previousNode);
-            fixture=t.applyFixture(matlab.unittest.fixtures.TemporaryFolderFixture);
-            t.chooseDialog("uigetdir",@()t.press(app.loadButton),Folder=fixture.Folder);
-            t.verifyEqual(app.controller.lastError.identifier,'SSDOT:MissingGroupResults');
-            t.verifyEmpty(app.controller.loadDialog); t.verifyFalse(app.controller.busy);
-            t.verifyEqual(app.controller.group,previousGroup); t.verifyEqual(app.controller.selectedNode,previousNode);
-            monitor=timer('ExecutionMode','fixedSpacing','Period',0.05,'BusyMode','drop', ...
-                'UserData',struct('samples',struct([]),'cancelSent',false), ...
-                'TimerFcn',@(source,~)WorkspaceUsabilityTest.observeDatasetLoading(source,app,true));
-            t.addTeardown(@()WorkspaceUsabilityTest.deleteTimer(monitor)); start(monitor);
-            t.chooseDialog("uigetdir",@()t.press(app.loadButton),Folder=fullfile(t.root,'ST001')); stop(monitor);
-            t.assertTrue(monitor.UserData.cancelSent);
-            t.verifyEqual(app.controller.lastError.identifier,'SSDOT:Cancelled');
-            t.verifyEmpty(app.controller.loadDialog); t.verifyEmpty(app.controller.clockTimer); t.verifyFalse(app.controller.busy);
-            t.verifyEqual(app.controller.group,previousGroup); t.verifyEqual(app.controller.selectedNode,previousNode);
-            retained=ssdot.io.readRun(previousNode); t.verifyEqual(retained.od,previous.od);
-            t.chooseDialog("uigetdir",@()t.press(app.loadButton),Folder=fullfile(t.root,'ST001'));
-            t.verifyEmpty(app.controller.lastError); t.verifyEmpty(app.controller.loadDialog);
-            t.verifyEqual(numel(app.controller.runs),3); t.verifyEqual(string(app.loadButton.Enable),"on");
+        function runAnalysisCompletesWholeWorkflowIncludingRoi(t)
+            app = t.openSt001("preview"); controller = app.controller;
+            t.press(app.runButton);
+            t.assertEmpty(controller.lastError);
+            t.verifyEqual(controller.cacheStatistics.solves,3); t.verifyFalse(controller.busy);
+            t.verifyEqual(app.tabGroup.SelectedTab,app.tabs.results);
+            t.verifyEqual(string(app.recordingTable.Data(:,6)),repmat("Complete",3,1));
+            t.verifyTrue(contains(string(app.banner.Text),'Analysis complete'));
+            t.verifyEqual(app.progressGauge.Value,100);
+            t.verifyTrue(controller.lastRunStats.conflictingActionsDisabled);
+            for state = controller.allRecordingStates()
+                t.verifySize(state.result.hbo,[20004 size(state.result.hbo,2)]);
+                t.verifyEqual(controller.roiStatus(state),"current");
+                t.verifyNumElements(controller.autoRois(state),size(state.result.hbo,2));
+                t.verifyTrue(state.result.provenance.preview);
+            end
+            state = controller.stateForNode(controller.selectedNode);
+            t.choose(app.chromophoreDropDown,"HbR"); t.choose(app.conditionDropDown,string(app.conditionDropDown.Items{2}));
+            patches = findall(app.resultAxes(1),'Type','patch'); t.verifyEqual(patches.FaceVertexCData,state.result.hbr(:,2));
+            t.verifyTrue(contains(string(app.resultLabel.Text),'COARSE SOFTWARE PREVIEW'));
+            t.choose(app.tabGroup,"ROI"); viewer = app.roiViewer;
+            t.verifyEqual(viewer.automaticCount,size(state.result.hbo,2)); t.verifyEqual(string(viewer.updateButton.Visible),"off");
+            t.choose(app.tabGroup,"Model");
+            for kind = ["Registered probe","Brain sensitivity","Scalp sensitivity","Brain kernel centers","Scalp kernel centers","Temporal basis"]
+                t.choose(app.modelMode,kind); t.verifyEmpty(controller.lastError);
+            end
+            % Unchanged results are reused; ROI is not recalculated.
+            rois = controller.cacheStatistics.roiCalculations;
+            t.press(app.runButton); t.assertEmpty(controller.lastError);
+            t.verifyEqual(controller.cacheStatistics.solves,3); t.verifyEqual(controller.cacheStatistics.roiCalculations,rois);
+            t.verifyTrue(any(contains(controller.messages,'Reused unchanged reconstruction')));
             t.verifyEqual(numel(findall(groot,'Type','figure')),1);
         end
-        function defaultWorkflowUsesTwoActionsAndOneWindow(t)
-            app=main(); t.addTeardown(@()delete(app)); countBefore=numel(findall(groot,'Type','figure'));
-            fixture=t.applyFixture(matlab.unittest.fixtures.TemporaryFolderFixture); app.controller.environment.paths=ssdot.app.runtimePaths(fixture.Folder);
-            observer=timer('ExecutionMode','fixedSpacing','Period',0.05,'BusyMode','drop','UserData',false, ...
-                'TimerFcn',@(source,~)WorkspaceUsabilityTest.observeFirstResult(source,app));
-            t.addTeardown(@()WorkspaceUsabilityTest.deleteTimer(observer)); start(observer);
-            dialog=t.chooseDialog("uigetdir",@()t.press(app.loadButton),Folder=fullfile(t.root,'ST001'));
-            stop(observer); t.verifyTrue(observer.UserData);
-            t.verifyNotEmpty(dialog);
-            t.verifyEqual(app.controller.cacheStatistics.solves,3);
-            t.verifyEmpty(app.controller.lastError); t.verifyEqual(app.tabGroup.SelectedTab,app.tabs.results);
-            t.verifyEqual(app.runButton.Text,'Recalculate');
-            state=app.controller.stateForNode(app.controller.selectedNode);
-            t.verifyEqual(state.resources.brainKernels,834); t.verifyEqual(state.resources.scalpKernels,894);
-            t.verifySize(state.result.hbo,[20004 2]); t.verifyFalse(state.result.provenance.preview);
-            t.verifyEqual(state.result.provenance.device,"cpu");
-            t.verifyTrue(app.controller.lastRunStats.conflictingActionsDisabled);
-            t.verifyEqual(numel(findall(groot,'Type','figure')),countBefore);
-            t.verifyTrue(all(string(app.stageTable.Data(:,2))=="Complete"));
-            exportapp(app.figure,fullfile(t.root,'results','validation','workspace-results.png'));
-            for title=["Raw signals","Optical density","Sensitivity","HbO / HbR","ROI","Diagnostics","Log"]
-                t.choose(app.tabGroup,title); drawnow;
-                t.verifyEqual(numel(findall(groot,'Type','figure')),countBefore);
-                if title=="ROI"
-                    viewer=app.roiViewer; t.press(viewer.calculateButton); t.verifyEmpty(app.controller.lastError);
-                    t.verifyNumElements(state.rois,1); t.verifyEqual(viewer.firstSelection.Value,1);
-                    t.verifyEqual(string(viewer.mode.Enable),"off");
-                    exportapp(app.figure,fullfile(t.root,'results','validation','workspace-roi.png'));
-                    roiTabs=viewer.meshSelection.Parent.Parent.Parent; t.choose(roiTabs,"Advanced");
-                    t.choose(viewer.meshSelection,"Full pial (anatomy)");
-                    t.verifyEmpty(viewer.compatibleIndices); t.verifyEqual(string(viewer.calculateButton.Enable),"off");
-                    t.verifyTrue(contains(string(viewer.status.Text),'No ROI is defined'));
-                    t.verifyNumElements(state.rois,1);
-                    t.choose(viewer.meshSelection,"Forward model (reconstruction)");
-                    t.verifyEqual(viewer.firstSelection.Value,1); t.verifyEqual(string(viewer.calculateButton.Enable),"on");
-                    exportapp(app.figure,fullfile(t.root,'results','validation','workspace-roi-advanced.png'));
-                end
-            end
-            t.choose(app.tabGroup,"Sensitivity");
-            for kind=["Brain sensitivity","Scalp sensitivity","Registered probe","Brain kernel centers","Scalp kernel centers","Temporal basis"]
-                t.choose(app.sensitivityMode,kind); t.verifyEmpty(app.controller.lastError);
-                t.verifyEqual(numel(findall(groot,'Type','figure')),countBefore);
-                if kind=="Temporal basis"
-                    expected={state.temporalBasis.t_HbO_brain,state.temporalBasis.t_HbR_brain};
-                    for index=1:2
-                        ax=app.sensitivityAxes(index); t.verifyEqual(string(ax.Visible),"on"); t.verifyEqual(ax.View,[0 90]);
-                        curves=findall(ax,'Type','line'); t.verifyNumElements(curves,size(expected{index},2));
-                        t.verifyTrue(any(arrayfun(@(line)isequal(line.YData(:),expected{index}(:,1)),curves)));
-                    end
-                    exportapp(app.figure,fullfile(t.root,'results','validation','workspace-temporal.png'));
-                end
-            end
-            t.choose(app.tabGroup,"HbO / HbR"); t.choose(app.chromophoreDropDown,"HbR");
-            t.choose(app.conditionDropDown,string(app.conditionDropDown.Items{2}));
-            patches=findall(app.resultAxes(1),'Type','patch'); t.verifyEqual(patches.FaceVertexCData,state.result.hbr(:,2));
-            t.press(app.runButton); t.verifyEmpty(app.controller.lastError);
-            t.verifyTrue(any(contains(app.controller.messages,'Reused unchanged reconstruction')));
-            fixture=t.applyFixture(matlab.unittest.fixtures.TemporaryFolderFixture);
-            filename=fullfile(fixture.Folder,'preview.mat'); ssdot.io.saveSession(filename,state);
-            session=ssdot.io.readSession(filename); t.verifyFalse(session.result.provenance.preview);
-            t.verifyEqual(numel(findall(groot,'Type','figure')),countBefore);
-            report=struct('mainActions',1,'folderChoices',1,'totalActions',2,'unexpectedApplicationWindows',0, ...
-                'profile',"automatic full Research resolution",'elapsedSeconds',app.controller.lastRunStats.elapsed);
-            save(fullfile(t.root,'results','validation','usability-workflow.mat'),'report');
-            fprintf('USABILITY: 1 main action + 1 folder choice; 0 unexpected windows.\n');
+        function settingsMarkResultsOutOfDateUntilRun(t)
+            app = t.openSt001("preview"); controller = app.controller;
+            t.choose(app.scopeDropDown,"Shown recording only"); t.press(app.runButton); t.assertEmpty(controller.lastError);
+            state = controller.stateForNode(controller.selectedNode); before = state.result.hbo;
+            t.choose(app.tabGroup,"Settings"); t.type(app.settings.alpha,0.02);
+            t.verifyEqual(string(app.profileDropDown.Value),"custom");
+            t.verifyEqual(controller.cacheStatistics.solves,1); t.verifyEqual(state.result.hbo,before);
+            t.verifyEqual(string(app.recordingTable.Data{1,6}),"Out of date");
+            t.verifyTrue(contains(string(app.banner.Text),'Out of date'));
+            t.choose(app.tabGroup,"Results"); t.verifyTrue(startsWith(string(app.resultLabel.Text),"COARSE SOFTWARE PREVIEW | OUT OF DATE"));
+            % An invalid value is rejected and the previous valid setting restored.
+            t.choose(app.tabGroup,"Settings"); t.type(app.settings.temporalRange,'5 1');
+            t.verifyEqual(controller.lastError.identifier,'SSDOT:TemporalRange'); t.verifyEqual(controller.config.temporalRange,[-2 18]);
+            t.verifyEqual(string(app.settings.temporalRange.Value),"-2 18");
+            t.press(app.runButton); t.assertEmpty(controller.lastError);
+            t.verifyEqual(controller.cacheStatistics.solves,2); t.verifyEqual(state.config.alpha,0.02);
+            t.verifyEqual(string(app.recordingTable.Data{1,6}),"Complete");
+            t.verifyEqual(state.result.provenance.config.alpha,0.02);
         end
-        function missingInputAndGpuFailureRecoverInSameApp(t)
-            app=t.loadRecording();
-            t.choose(app.tabGroup,"Advanced"); app.atlasPath.Value=fullfile(tempdir,'ssdot-missing-atlas.mat'); % Inject missing input without changing source files.
-            t.press(app.runButton); t.verifyEqual(app.controller.lastError.identifier,'SSDOT:MissingInputs');
-            t.verifyFalse(app.controller.busy); t.verifyEqual(string(app.runButton.Enable),"on");
-            t.verifyTrue(any(contains(string(app.errorDetails.Value),'checkWorkflowInputs')));
-            app.atlasPath.Value=fullfile(t.root,'ST001','atlasViewer.mat');
-            t.press(app.retryButton); t.verifyEmpty(app.controller.lastError); t.verifyTrue(isvalid(app.figure));
-            t.choose(app.deviceDropDown,"GPU");
-            if ~app.controller.gpu.available
-                 t.verifyEqual(string(app.deviceDropDown.Value),"gpu");
-                t.press(app.runButton); t.verifyEqual(app.controller.lastError.identifier,'SSDOT:GPUUnavailable');
-                t.verifyEqual(string(app.deviceDropDown.Value),"gpu"); t.verifyFalse(app.controller.gpuReconstructionValidated);
-                t.verifyEqual(string(app.useCpuButton.Visible),"on");
-                t.press(app.useCpuButton); t.verifyEqual(string(app.deviceDropDown.Value),"cpu");
-                t.verifyTrue(contains(string(app.banner.Text),'explicitly selected'));
-                t.press(app.retryButton); t.verifyEmpty(app.controller.lastError);
-                state=app.controller.stateForNode(app.controller.selectedNode);
-                t.verifyEqual(state.result.provenance.device,"cpu");
-                t.verifyTrue(contains(state.result.provenance.fallback,'explicitly selected'));
-            end
-            t.verifyFalse(app.controller.busy); t.verifyEqual(numel(findall(groot,'Type','figure')),1);
+        function roiSettingsUpdateWithoutReconstructionAndEmptyRoiIsValid(t)
+            app = t.openSt001("preview"); controller = app.controller;
+            t.choose(app.scopeDropDown,"Shown recording only"); t.press(app.runButton); t.assertEmpty(controller.lastError);
+            state = controller.stateForNode(controller.selectedNode);
+            t.choose(app.tabGroup,"Settings"); t.type(app.roiSettings.upperThreshold,2);
+            t.verifyEqual(controller.roiStatus(state),"stale");
+            t.choose(app.tabGroup,"ROI"); viewer = app.roiViewer;
+            t.verifyEqual(string(viewer.updateButton.Visible),"on"); t.verifyTrue(contains(string(viewer.status.Text),'ROI settings changed'));
+            t.press(viewer.updateButton); t.assertEmpty(controller.lastError);
+            t.verifyEqual(controller.cacheStatistics.solves,1);
+            t.verifyEqual(controller.roiStatus(state),"current");
+            % A fraction above 1 of a positive peak cannot select a vertex: an empty, legitimate ROI.
+            t.verifyEqual(controller.roiCounts(state),zeros(1,size(state.result.hbo,2)));
+            t.verifyTrue(contains(string(app.roiViewer.status.Text),'empty'));
+            t.verifyTrue(contains(string(app.recordingTable.Data{1,7}),'empty'));
+            t.verifyEqual(string(app.roiViewer.updateButton.Visible),"off");
         end
-        function cancelAndRetryRetainRecoverableState(t)
-            app=t.loadRecording();
-            state=app.controller.stateForNode(app.controller.selectedNode); config=state.config; config.alpha=0.023; state.applyConfig(config);
-            cancellation=timer('ExecutionMode','fixedSpacing','Period',0.1,'StartDelay',0.1, ...
-                'TimerFcn',@(source,~)WorkspaceUsabilityTest.cancelWhenBusy(source,app));
+        function cancelAndRerunRecover(t)
+            app = t.openSt001("preview"); controller = app.controller;
+            cancellation = timer('ExecutionMode','fixedSpacing','Period',0.05,'BusyMode','drop', ...
+                'TimerFcn',@(source,~)WorkspaceUsabilityTest.cancelDuringStage(source,app,5));
             t.addTeardown(@()WorkspaceUsabilityTest.deleteTimer(cancellation)); start(cancellation);
-            t.press(app.runButton); t.verifyNotEmpty(app.controller.lastError);
-            t.verifyEqual(app.controller.lastError.identifier,'SSDOT:Cancelled');
-            t.verifyTrue(any(string(app.stageTable.Data(:,2))=="Cancelled"));
-            t.verifyFalse(app.controller.busy); t.verifyEqual(string(app.runButton.Enable),"on");
-            t.press(app.retryButton); t.verifyEmpty(app.controller.lastError);
+            t.press(app.runButton); stop(cancellation);
+            t.verifyEqual(controller.lastError.identifier,'SSDOT:Cancelled');
+            t.verifyTrue(controller.lastRun.cancelled); t.verifyFalse(controller.busy);
+            t.verifyTrue(any(string(app.recordingTable.Data(:,6))=="Cancelled"));
+            t.verifyTrue(contains(string(app.banner.Text),'cancelled'));
+            t.verifyEqual(string(app.runButton.Enable),"on"); t.verifyEqual(string(app.cancelButton.Enable),"off");
+            t.press(app.runButton); t.verifyEmpty(controller.lastError);
+            t.verifyEqual(string(app.recordingTable.Data(:,6)),repmat("Complete",3,1));
             t.verifyEqual(numel(findall(groot,'Type','figure')),1);
+        end
+        function closingDuringRunStopsCleanly(t)
+            app = t.openSt001("preview"); timersBefore = numel(timerfindall);
+            closer = timer('ExecutionMode','fixedSpacing','Period',0.05,'BusyMode','drop', ...
+                'TimerFcn',@(source,~)WorkspaceUsabilityTest.closeDuringStage(source,app,5));
+            t.addTeardown(@()WorkspaceUsabilityTest.deleteTimer(closer)); start(closer);
+            % Invoke the callback directly: the gesture driver cannot inspect a window that closes during it.
+            callback = app.runButton.ButtonPushedFcn; callback(app.runButton,struct()); stop(closer);
+            t.verifyFalse(isvalid(app),'Closing during a run cancels it and then closes the window.');
+            t.verifyEmpty(findall(groot,'Type','figure'));
+            t.verifyEqual(numel(timerfindall),timersBefore+1,'Only the test''s own timer remains.');
+        end
+        function missingModelInputsAreExplainedAndRecoverable(t)
+            app = t.openSt001("preview"); controller = app.controller;
+            t.choose(app.tabGroup,"Settings");
+            missing = fullfile(tempdir,'ssdot-missing-atlas.mat');
+            t.type(app.atlasPath,missing);
+            t.verifyEqual(string(app.runButton.Enable),"off");
+            t.verifyTrue(contains(string(app.readinessLabel.Text),'Missing') && contains(string(app.readinessLabel.Text),'ssdot-missing-atlas'));
+            controller.perform(@()controller.runAnalysis());
+            t.verifyEqual(controller.lastError.identifier,'SSDOT:MissingInputs'); t.verifyEqual(controller.cacheStatistics.solves,0);
+            % The injected chooser stands in for the native file dialog.
+            controller.chooser.openFile = @(varargin)string(fullfile(t.root,'ST001','atlasViewer.mat'));
+            t.press(t.browseButtonFor(app.atlasPath));
+            t.verifyEqual(string(app.runButton.Enable),"on");
+            t.choose(app.scopeDropDown,"Shown recording only"); t.press(app.runButton); t.verifyEmpty(controller.lastError);
+            t.verifyEqual(controller.cacheStatistics.solves,1);
+        end
+        function datasetOpeningFailureAndCancelKeepPreviousDataset(t)
+            app = t.openSt001("preview"); controller = app.controller;
+            previousGroup = controller.group; previousNode = controller.selectedNode;
+            fixture = t.applyFixture(matlab.unittest.fixtures.TemporaryFolderFixture);
+            controller.chooser.folder = @(varargin)string(fixture.Folder);
+            t.press(app.loadButton);
+            t.verifyEqual(controller.lastError.identifier,'SSDOT:MissingGroupResults');
+            t.verifyFalse(controller.busy); t.verifyEqual(controller.group,previousGroup); t.verifyEqual(controller.selectedNode,previousNode);
+            controller.chooser.folder = @(varargin)string(fullfile(t.root,'ST001'));
+            monitor = timer('ExecutionMode','fixedSpacing','Period',0.05,'BusyMode','drop','UserData',false, ...
+                'TimerFcn',@(source,~)WorkspaceUsabilityTest.cancelLoading(source,app));
+            t.addTeardown(@()WorkspaceUsabilityTest.deleteTimer(monitor)); start(monitor);
+            t.press(app.loadButton); stop(monitor);
+            t.assertTrue(monitor.UserData);
+            t.verifyEqual(controller.lastError.identifier,'SSDOT:Cancelled');
+            t.verifyEmpty(controller.loadDialog); t.verifyEmpty(controller.clockTimer); t.verifyFalse(controller.busy);
+            t.verifyEqual(controller.group,previousGroup); t.verifyEqual(controller.selectedNode,previousNode);
+            t.press(app.loadButton); t.verifyEmpty(controller.lastError);
+            t.verifyEqual(numel(controller.runs),3); t.verifyEqual(numel(findall(groot,'Type','figure')),1);
+        end
+        function storedSignalsWithoutAverageStayViewable(t)
+            app = t.openSt001("preview"); controller = app.controller; view = app.signals;
+            t.choose(app.tabGroup,"Signals");
+            for index = 1:3
+                t.choose(app.recordingDropDown,string(app.recordingDropDown.Items{index}));
+                t.choose(view.kind,"Optical density");
+                t.verifyEqual(string(view.average.Enable),"off"); t.verifyFalse(view.average.Value);
+                t.verifyTrue(contains(string(view.notice.Text),'no dodAvg'));
+                % A stale callback requesting the missing average is corrected, not an error.
+                view.average.Value = true; callback = view.average.ValueChangedFcn; callback(view.average,struct());
+                t.verifyFalse(view.average.Value); t.verifyEmpty(controller.lastError);
+                t.choose(view.signal,"Both"); t.verifyEmpty(controller.lastError);
+                recording = ssdot.io.readRun(controller.selectedNode);
+                lines = findall(view.axes,'Type','line');
+                t.verifyTrue(any(arrayfun(@(line)numel(line.YData)==numel(recording.time),lines)));
+                t.choose(view.kind,"Raw intensity"); t.verifyEmpty(controller.lastError);
+            end
+            t.verifyEqual(controller.cacheStatistics.solves,0);
+        end
+        function sessionsAndExportsUseCurrentRoisAndInjectedLocations(t)
+            app = t.openSt001("preview"); controller = app.controller;
+            t.choose(app.scopeDropDown,"Shown recording only"); t.press(app.runButton); t.assertEmpty(controller.lastError);
+            state = controller.stateForNode(controller.selectedNode); expected = controller.autoRois(state);
+            fixture = t.applyFixture(matlab.unittest.fixtures.TemporaryFolderFixture);
+            filename = fullfile(fixture.Folder,'session.mat');
+            controller.chooser.saveFile = @(varargin)string(filename);
+            t.press(app.saveSessionButton); t.verifyEmpty(controller.lastError); t.verifyTrue(isfile(filename));
+            % Restoring after a settings change adopts the session settings and shows ROIs again.
+            t.choose(app.tabGroup,"Settings"); t.type(app.settings.alpha,0.03);
+            t.choose(app.recordingDropDown,string(app.recordingDropDown.Items{2}));
+            controller.chooser.openFile = @(varargin)string(filename);
+            t.press(app.openSessionButton); t.verifyEmpty(controller.lastError);
+            t.verifyEqual(app.recordingDropDown.Value,1,'Opening a session selects its own recording.');
+            t.verifyEqual(controller.config.alpha,0.01); t.verifyEqual(app.settings.alpha.Value,0.01);
+            t.verifyEqual(state.origin,"session"); t.verifyEmpty(state.temporalBasis);
+            t.verifyTrue(contains(string(app.resultLabel.Text),'RESTORED SESSION') && contains(string(app.resultLabel.Text),'gamma'));
+            t.verifyEqual(controller.autoRois(state),expected);
+            t.choose(app.tabGroup,"ROI"); t.verifyEqual(app.roiViewer.automaticCount,numel(expected));
+            exportRoot = fullfile(fixture.Folder,'exports'); mkdir(exportRoot);
+            controller.chooser.folder = @(varargin)string(exportRoot);
+            app.exportSettings.scope.Value = 'selected';
+            t.press(app.exportButton); t.verifyEmpty(controller.lastError);
+            manifest = controller.lastExport; t.verifyEqual(manifest.status,"complete");
+            kinds = string({manifest.records{1}.files.kind});
+            t.verifyTrue(any(kinds=="hbo") && any(kinds=="hbr") && sum(kinds=="roi")==numel(expected));
+            t.verifyEqual(controller.cacheStatistics.solves,1);
+        end
+        function cpuSwitchIsOfferedOnlyForGpuFailures(t)
+            app = t.openSt001("preview"); controller = app.controller;
+            t.choose(app.deviceDropDown,"GPU");
+            controller.showError(MException('SSDOT:MissingSeries','Missing optional plot data.'));
+            t.verifyEqual(string(app.useCpuButton.Visible),"off"); t.verifyEqual(string(app.deviceDropDown.Value),"gpu");
+            controller.showError(MException('SSDOT:GpuMemory','GPU memory budget exceeded.'));
+            t.verifyEqual(string(app.useCpuButton.Visible),"on");
+            t.press(app.useCpuButton);
+            t.verifyEqual(string(app.deviceDropDown.Value),"cpu"); t.verifyEqual(string(controller.config.device),"cpu");
+            t.verifyTrue(contains(string(app.banner.Text),'explicitly selected'));
+            % Availability is only probed once GPU is requested.
+            t.choose(app.deviceDropDown,"GPU"); t.choose(app.scopeDropDown,"Shown recording only"); t.press(app.runButton);
+            state = controller.stateForNode(controller.selectedNode);
+            if controller.gpu.available && controller.gpu.computationPassed
+                t.verifyEmpty(controller.lastError); t.verifyEqual(state.result.provenance.device,"gpu");
+                t.verifyEqual(string(app.useCpuButton.Visible),"off");
+            else
+                t.verifyEqual(controller.lastError.identifier,'SSDOT:GPUUnavailable'); t.verifyEmpty(state.result);
+                t.verifyEqual(string(app.useCpuButton.Visible),"on"); t.verifyFalse(controller.gpuReconstructionValidated);
+            end
         end
         function researchDefaultsAndMemoryBudgetRemainExplicit(t)
             addpath(fullfile(t.root,'src'));
-            research=ssdot.app.profileConfig('research','cpu'); preview=ssdot.app.profileConfig('preview','cpu');
+            research = ssdot.app.profileConfig('research','cpu'); preview = ssdot.app.profileConfig('preview','cpu');
             t.verifyEqual([research.brainSamplingThreshold research.scalpSamplingThreshold research.brainSigma research.scalpSigma],[5 5 5 5]);
             t.verifyEqual([preview.brainSamplingThreshold preview.scalpSamplingThreshold preview.brainSigma preview.scalpSigma],[120 160 30 50]);
-            recording=struct('time',(1:1000)'); sensitivity=struct('channels',(1:100)');
-            centers=struct('brain',zeros(20,3),'scalp',zeros(30,3)); temporal=struct('T_HbO_brain',zeros(1000,2));
-            estimate=ssdot.app.estimateResources(recording,sensitivity,centers,temporal,research,1,Inf);
+            recording = struct('time',(1:1000)'); sensitivity = struct('channels',(1:100)');
+            centers = struct('brain',zeros(20,3),'scalp',zeros(30,3)); temporal = struct('T_HbO_brain',zeros(1000,2));
+            estimate = ssdot.app.estimateResources(recording,sensitivity,centers,temporal,research,1,Inf);
             t.verifyFalse(estimate.hostFits); t.verifyGreaterThan(estimate.designBytes,0);
-            gpuConfig=research; gpuConfig.device='gpu';
-            gpuEstimate=ssdot.app.estimateResources(recording,sensitivity,centers,temporal,gpuConfig,Inf,2^30);
+            gpuConfig = research; gpuConfig.device = 'gpu';
+            gpuEstimate = ssdot.app.estimateResources(recording,sensitivity,centers,temporal,gpuConfig,Inf,2^30);
             t.verifyLessThan(gpuEstimate.normalEquationChunk,1024); t.verifyEqual(research.brainSamplingThreshold,5);
-        end
-        function missingAveragedOdIsDisabledAndDoesNotBreakViewing(t)
-            app=t.loadRecording(); t.choose(app.tabGroup,"Optical density");
-            for index=1:3
-                t.choose(app.recordingDropDown,string(app.recordingDropDown.Items{index+1}));
-                t.verifyEqual(string(app.od.average.Enable),"off"); t.verifyFalse(app.od.average.Value);
-                t.verifyTrue(contains(string(app.od.notice.Text),'no dodAvg'));
-                % Reproduce the previous callback even if stale UI state requests the missing average.
-                app.od.average.Value=true; callback=app.od.average.ValueChangedFcn; callback(app.od.average,struct());
-                t.verifyFalse(app.od.average.Value); t.verifyEmpty(app.controller.lastError);
-                t.choose(app.od.signal,"Both"); t.verifyEmpty(app.controller.lastError);
-                recording=ssdot.io.readRun(app.controller.selectedNode);
-                lines=findall(app.od.axes,'Type','line');
-                t.verifyTrue(any(arrayfun(@(line)numel(line.YData)==numel(recording.time),lines)));
-            end
-            t.verifyEqual(numel(findall(groot,'Type','figure')),1);
-        end
-        function cpuSwitchIsOfferedOnlyForGpuFailures(t)
-            app=t.loadRecording(); t.choose(app.deviceDropDown,"GPU");
-            app.controller.showError(MException('SSDOT:MissingSeries','Missing optional plot data.'));
-            t.verifyEqual(string(app.useCpuButton.Visible),"off"); t.verifyEqual(string(app.deviceDropDown.Value),"gpu");
-            app.controller.showError(MException('SSDOT:GpuMemory','GPU memory budget exceeded.'));
-            t.verifyEqual(string(app.useCpuButton.Visible),"on");
-            state=app.controller.stateForNode(app.controller.selectedNode); expected=state.config; expected.device="cpu";
-            t.press(app.useCpuButton);
-            t.verifyEqual(string(app.deviceDropDown.Value),"cpu"); t.verifyEqual(state.config,expected);
-            t.verifyTrue(contains(string(app.banner.Text),'explicitly selected'));
-        end
-        function advancedStageAndSessionRestoreStaySynchronized(t)
-            app=t.loadRecording(); t.choose(app.tabGroup,"Advanced");
-            t.type(app.settings.alpha,0.02);
-            state=app.controller.stateForNode(app.controller.selectedNode);
-            t.verifyEqual(app.settings.alpha.Value,0.02);
-            t.verifyEqual(state.config.alpha,0.02); t.verifyEqual(state.runProfile,"custom");
-            t.verifyTrue(state.previewDerived); t.verifyTrue(contains(string(app.banner.Text),'COARSE PREVIEW'));
-            exportapp(app.figure,fullfile(t.root,'results','validation','workspace-advanced.png'));
-            t.choose(app.stageDropDown.Parent.Parent.Parent.Parent,"Individual stages");
-            t.choose(app.stageDropDown,"Check inputs"); t.press(app.stageButton);
-            t.verifyEmpty(app.controller.lastError); t.verifyEqual(string(app.stageTable.Data{1,2}),"Complete");
-            t.press(app.runButton); t.verifyEmpty(app.controller.lastError);
-            t.verifyTrue(state.result.provenance.preview);
-            t.verifyNotEmpty(state.result.provenance.inputFingerprint);
-            fixture=t.applyFixture(matlab.unittest.fixtures.TemporaryFolderFixture);
-            filename=fullfile(fixture.Folder,'custom.mat'); ssdot.io.saveSession(filename,state);
-            t.choose(app.tabGroup,"Advanced");
-            t.choose(app.profileDropDown.Parent.Parent.Parent,"Scientific settings");
-            t.choose(app.profileDropDown,"Preview - coarse");
-            t.chooseDialog("uigetfile",@()app.controller.loadSelectedSession(),File=filename);
-            t.verifyEqual(state.runProfile,"custom"); t.verifyEqual(app.settings.alpha.Value,0.02);
-            t.verifyTrue(state.previewDerived); t.verifyTrue(contains(string(app.resultLabel.Text),'COARSE SOFTWARE PREVIEW'));
-            t.verifyEqual(string(app.deviceDropDown.Value),string(state.config.device));
-            t.verifyEqual(string(app.atlasPath.Value),state.atlasFile); t.verifyNotEmpty(state.result);
-            t.verifyEqual(numel(findall(groot,'Type','figure')),1);
         end
     end
     methods (Access=private)
-        function app=loadRecording(t)
-            app=main(); t.addTeardown(@()delete(app));
-            app.processingModeDropDown.Value='selected'; app.profileDropDown.Value='preview';
-            fixture=t.applyFixture(matlab.unittest.fixtures.TemporaryFolderFixture); app.controller.environment.paths=ssdot.app.runtimePaths(fixture.Folder);
-            t.chooseDialog("uigetdir",@()t.press(app.loadButton),Folder=fullfile(t.root,'ST001'));
-            t.choose(app.recordingDropDown,string(app.recordingDropDown.Items{2}));
+        function app = newApp(t)
+            app = main(); t.addTeardown(@()delete(app));
+            fixture = t.applyFixture(matlab.unittest.fixtures.TemporaryFolderFixture);
+            app.controller.environment.paths = ssdot.app.runtimePaths(fixture.Folder);
+            app.controller.chooser.folder = @(varargin)string(fullfile(t.root,'ST001'));
+        end
+        function app = openSt001(t,profile)
+            app = t.newApp(); t.press(app.loadButton); t.assertEmpty(app.controller.lastError);
+            if profile=="preview", t.choose(app.profileDropDown,"Preview (coarse software check)"); end
+        end
+        function button = browseButtonFor(~,field)
+            siblings = field.Parent.Children; button = [];
+            for child = siblings'
+                if isa(child,'matlab.ui.control.Button') && isequal(child.Layout.Row,field.Layout.Row), button = child; end
+            end
         end
     end
     methods (Static, Access=private)
-        function observeFirstResult(source,app)
-            controller=app.controller;
-            if ~controller.batchActive || numel(controller.runs)<3, return; end
-            first=controller.stateForNode(controller.runs(1)); third=controller.stateForNode(controller.runs(3));
-            if first.status~="Completed" || ~isempty(third.result), return; end
-            patches=findall(app.resultAxes(1),'Type','patch');
-            if isempty(patches), return; end
-            source.UserData=true; stop(source);
-            app.recordingDropDown.Value=3; controller.selectRecording(); % Waiting selection cannot start nested processing.
-            app.recordingDropDown.Value=1; controller.selectRecording();
-        end
-        function observeDatasetLoading(source,app,cancel)
-            dialog=app.controller.loadDialog;
-            if ~app.controller.busy || isempty(dialog) || ~isvalid(dialog), return; end
-            data=source.UserData;
-            sample=struct('animated',strcmp(dialog.Indeterminate,'on'),'message',string(dialog.Message), ...
-                'controlsDisabled',strcmp(app.loadButton.Enable,'off') && strcmp(app.deviceDropDown.Enable,'off'), ...
-                'progress',app.progressGauge.Value,'figures',numel(findall(groot,'Type','figure')));
-            if isempty(data.samples), data.samples=sample; else, data.samples(end+1)=sample; end
-            source.UserData=data;
-            if cancel && sample.progress>0
-                dialog.CancelRequested=true; data.cancelSent=true; source.UserData=data; stop(source);
+        function cancelDuringStage(source,app,stage)
+            controller = app.controller;
+            if controller.busy && controller.batchActive && controller.currentStage>=stage
+                callback = app.cancelButton.ButtonPushedFcn; callback(app.cancelButton,struct()); stop(source);
             end
         end
-        function cancelWhenBusy(source,app)
-            if app.controller.busy
-                callback=app.cancelButton.ButtonPushedFcn; callback(app.cancelButton,struct()); stop(source);
+        function closeDuringStage(source,app,stage)
+            if ~isvalid(app), stop(source); return; end
+            controller = app.controller;
+            if controller.busy && controller.batchActive && controller.currentStage>=stage
+                callback = app.figure.CloseRequestFcn; callback(app.figure,struct()); stop(source);
             end
+        end
+        function cancelLoading(source,app)
+            dialog = app.controller.loadDialog;
+            if ~app.controller.busy || isempty(dialog) || ~isvalid(dialog) || app.progressGauge.Value<=0, return; end
+            dialog.CancelRequested = true; source.UserData = true; stop(source);
         end
         function deleteTimer(value)
             if isvalid(value), stop(value); delete(value); end

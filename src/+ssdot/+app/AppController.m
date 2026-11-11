@@ -1,15 +1,28 @@
 classdef AppController < handle
-    %APPCONTROLLER Recoverable workflow over the validated numerical packages.
+    %APPCONTROLLER Explicit, recoverable workflow over the validated numerical packages.
+    %   openDataset and selectRecording only read and display stored data.
+    %   runAnalysis is the single action that computes: input checks,
+    %   reconstruction and ROI selection for the chosen recordings.
     properties
         app
         environment
         group = []
         runs = []
+        recordingInfo = struct([])
         averageNodes = {}
         datasetRoot = ""
         selectedNode = []
         displayedState = []
         states
+        % Workspace analysis settings, applied to each recording when Run Analysis starts.
+        config
+        profile = "research"
+        previewDerived = false
+        atlasFile = ""
+        forwardFolder = ""
+        roiSettings = struct('upperThreshold',0.90,'lowerThreshold',0.01,'exclusionDistance',40)
+        % File and folder choices; tests replace these handles instead of driving OS dialogs.
+        chooser
         messages = ""
         busy = false
         closeWhenIdle = false
@@ -19,428 +32,450 @@ classdef AppController < handle
         gpuReconstructionValidated = false
         fallbackNotice = ""
         lastRunStats = struct()
+        lastRun = []
         pendingInputs = []
         currentStage = 0
-        stageNames = {"Check inputs","Sensitivity","Temporal basis","Resource check","Spatial bases","Observations","Inverse","Render results"}
+        stageNames = {"Check inputs","Prepare sensitivity","Temporal design","Memory check","Spatial bases","Observations","Reconstruction","ROI"}
         startedAt
         stageStarted
         clockTimer = []
         loadDialog = []
         sharedCache
         batchActive = false
-        remainingIndices = []
-        batchEstimate = []
+        batchPosition = 0
+        batchCount = 0
         resultMemoryLimitBytes = 128*2^20
-        automaticBudgetSeconds = 120
         accessClock = 0
-        cacheStatistics = struct('solves',0,'resultHits',0,'diskHits',0,'recordingReloads',0)
+        cacheStatistics = struct('solves',0,'resultHits',0,'diskHits',0,'recordingReloads',0,'roiCalculations',0)
         currentRunStartedAt = []
         lastExport = []
     end
     methods
         function obj = AppController(app,environment)
-            obj.app=app; obj.environment=environment;
-            obj.states=containers.Map('KeyType','char','ValueType','any');
-            obj.sharedCache=ssdot.io.SharedCache();
-            app.refreshSettings(ssdot.app.profileConfig("research","cpu"));
-            app.stageTable.Data=[cellstr(string(obj.stageNames(:))),repmat({'Pending'},8,1),num2cell(zeros(8,1))];
-            obj.checkGpu(false); obj.log('Ready. Full Research resolution; Automatic processing; CPU selected.');
+            obj.app = app; obj.environment = environment;
+            obj.states = containers.Map('KeyType','char','ValueType','any');
+            obj.sharedCache = ssdot.io.SharedCache();
+            obj.chooser = defaultChooser();
+            obj.config = ssdot.app.profileConfig("research","cpu");
+            app.refreshSettings(obj.config); app.refreshRoiSettings(obj.roiSettings);
+            obj.resetStageTable('Pending');
+            obj.checkGpu(false);
+            obj.log('Ready. Open a dataset; nothing is computed until Run Analysis.');
+            app.setBanner('Open a dataset to begin. Opening and browsing never start an analysis.','info');
+            app.updateActions();
         end
         function delete(obj)
-            obj.stopClock(); obj.closeLoadDialog(); obj.destroyEmbeddedViews();
+            obj.stopClock(); obj.closeLoadDialog(); obj.destroyRoiViewer(); obj.destroyAverageViewer();
         end
         function perform(obj,action)
-            try, action(); catch exception, obj.showError(exception); end
+            try
+                action();
+            catch exception
+                % The window may have been closed while the action finished.
+                if isvalid(obj) && isvalid(obj.app), obj.showError(exception); end
+            end
         end
         function log(obj,message)
-            obj.messages(end+1)=string(datetime('now','Format','HH:mm:ss'))+"  "+string(message);
-            if numel(obj.messages)>500, obj.messages=obj.messages(end-499:end); end
-            obj.app.logText.Value=cellstr(obj.messages(strlength(obj.messages)>0));
+            obj.messages(end+1) = string(datetime('now','Format','HH:mm:ss'))+"  "+string(message);
+            if numel(obj.messages)>500, obj.messages = obj.messages(end-499:end); end
+            obj.app.logText.Value = cellstr(obj.messages(strlength(obj.messages)>0));
         end
-        function group = loadDataset(obj,folder,process)
-            if nargin<3, process=true; end
-            assert(~obj.busy,'SSDOT:Busy','Wait for processing or cancel it before loading another dataset.');
-            obj.beginWork(); cleanup=onCleanup(@()obj.finishWork());
-            obj.currentStage=0; obj.lastError=[]; obj.app.errorDetails.Value={'No error.'};
-            obj.app.statusLabel.Text='Loading dataset...'; obj.app.banner.Text='Loading dataset. Reading Homer results and recordings...';
-            obj.app.progressLabel.Text='Opening dataset...'; obj.app.progressGauge.Value=0;
+
+        %% Dataset and selection: read and display only
+        function browseDataset(obj)
+            initial = obj.environment.dataRoot; if strlength(obj.datasetRoot)>0, initial = obj.datasetRoot; end
+            folder = obj.chooser.folder(initial,'Select dataset folder containing derivatives/, fw/ and atlasViewer.mat');
+            if strlength(folder)>0, obj.openDataset(folder); end
+        end
+        function group = openDataset(obj,folder)
+            assert(~obj.busy,'SSDOT:Busy','Wait for the current analysis to finish or cancel it before opening another dataset.');
+            folder = string(folder);
+            assert(isfolder(folder),'SSDOT:DatasetFolder','Dataset folder not found: %s',folder);
+            obj.beginWork(); cleanup = onCleanup(@()obj.finishWork());
+            obj.currentStage = 0; obj.lastError = []; obj.app.errorDetails.Value = {'No error.'};
+            obj.app.statusLabel.Text = 'Opening dataset...';
+            obj.app.setBanner('Opening dataset: reading stored Homer results. No analysis is run.','info');
+            obj.app.progressLabel.Text = 'Opening dataset...'; obj.app.progressGauge.Value = 0;
             if strcmp(obj.app.figure.Visible,'on')
-                obj.loadDialog=uiprogressdlg(obj.app.figure,'Title','Loading dataset', ...
-                    'Message','Opening Homer results. Please wait...', 'Indeterminate','on','Cancelable','on', ...
+                obj.loadDialog = uiprogressdlg(obj.app.figure,'Title','Opening dataset', ...
+                    'Message','Reading stored Homer results. Please wait...','Indeterminate','on','Cancelable','on', ...
                     'CancelText','Cancel after current read');
             end
             drawnow;
             try
-                group=ssdot.io.loadDataset(folder,@(message,completed,total)obj.updateDatasetProgress(message,completed,total));
+                group = ssdot.io.loadDataset(folder,@(message,completed,total)obj.updateDatasetProgress(message,completed,total));
             catch exception
                 if strcmp(exception.identifier,'SSDOT:Cancelled')
-                    obj.app.progressLabel.Text='Dataset loading cancelled.';
+                    obj.app.progressLabel.Text = 'Opening cancelled.';
                 else
-                    obj.app.progressLabel.Text='Dataset loading failed.';
+                    obj.app.progressLabel.Text = 'Opening failed.';
                 end
                 obj.log(obj.app.progressLabel.Text); rethrow(exception);
             end
-            obj.group=group; obj.datasetRoot=string(folder); obj.selectedNode=[]; obj.displayedState=[];
-            obj.states=containers.Map('KeyType','char','ValueType','any');
-            obj.remainingIndices=[]; obj.app.setRemainder("");
-            obj.runs=[]; obj.averageNodes={};
-            for index=1:numel(group)
-                obj.runs=[obj.runs,obj.leafRuns(group(index))]; obj.collectAverageNodes(group(index)); %#ok<AGROW>
+            % Commit only after a complete, successful read.
+            obj.destroyRoiViewer(); obj.destroyAverageViewer();
+            obj.group = group; obj.datasetRoot = folder; obj.selectedNode = []; obj.displayedState = [];
+            obj.states = containers.Map('KeyType','char','ValueType','any');
+            obj.runs = []; obj.averageNodes = {};
+            for index = 1:numel(group)
+                obj.runs = [obj.runs,obj.leafRuns(group(index))]; obj.collectAverageNodes(group(index)); %#ok<AGROW>
             end
-            obj.app.datasetPath.Value=char(folder);
-            obj.app.recordingDropDown.Items=[{'Choose a recording'},cellstr(string({obj.runs.name}))];
-            obj.app.recordingDropDown.ItemsData=0:numel(obj.runs); obj.app.recordingDropDown.Value=0;
-            obj.app.averageNode.Items=cellfun(@(node)char(string(node.type)+": "+string(node.name)),obj.averageNodes,'UniformOutput',false);
-            obj.app.averageNode.ItemsData=1:numel(obj.averageNodes);
-            obj.destroyEmbeddedViews(); obj.app.clearDataViews(); obj.lastError=[];
-            obj.app.statusLabel.Text=sprintf('Loaded %d recordings.',numel(obj.runs));
-            obj.app.tabGroup.SelectedTab=obj.app.tabs.raw;
-            obj.app.banner.Text='Dataset loaded. Preparing full-resolution reconstruction.';
-            obj.app.progressGauge.Value=100; obj.app.progressLabel.Text=sprintf('Dataset ready - %d recordings.',numel(obj.runs));
-            obj.log('Loaded '+string(folder)+"; source files are read-only.");
-            obj.refreshRecordingStatuses();
+            obj.recordingInfo = arrayfun(@(node)describeRecording(node),obj.runs);
+            obj.atlasFile = fullfile(folder,'atlasViewer.mat'); obj.forwardFolder = folder;
+            obj.app.atlasPath.Value = char(obj.atlasFile); obj.app.forwardPath.Value = char(obj.forwardFolder);
+            obj.app.datasetPath.Value = char(folder);
+            names = cellstr(string({obj.runs.name}));
+            if isempty(names)
+                obj.app.recordingDropDown.Items = {'No recordings found'}; obj.app.recordingDropDown.ItemsData = 0;
+            else
+                obj.app.recordingDropDown.Items = names; obj.app.recordingDropDown.ItemsData = 1:numel(names);
+                obj.app.recordingDropDown.Value = 1;
+            end
+            if isempty(obj.averageNodes)
+                obj.app.averageNode.Items = {'No groups'}; obj.app.averageNode.ItemsData = 0;
+            else
+                obj.app.averageNode.Items = cellfun(@(node)char(string(node.type)+": "+string(node.name)),obj.averageNodes,'UniformOutput',false);
+                % Default to the first level whose children are recordings: the usual average.
+                runParents = find(cellfun(@(node)any(arrayfun(@(child)isa(child,'RunClass'),ssdot.io.nodeChildren(node))),obj.averageNodes),1);
+                if isempty(runParents), runParents = 1; end
+                obj.app.averageNode.ItemsData = 1:numel(obj.averageNodes); obj.app.averageNode.Value = runParents;
+            end
+            obj.app.clearDataViews(); obj.resetStageTable('Pending');
+            obj.app.progressGauge.Value = 0; obj.app.progressLabel.Text = '';
+            obj.app.stageLabel.Text = 'No analysis running.';
+            obj.log('Opened '+folder+" ("+numel(obj.runs)+" recordings); source files are read-only.");
             clear cleanup;
-            if process && ~isempty(obj.runs) && isvalid(obj.app.figure)
-                obj.app.recordingDropDown.Value=1; obj.selectRecording(false); obj.processDataset();
-            end
+            if ~isvalid(obj), return; end % closed while opening
+            if ~isempty(obj.runs), obj.selectRecording(); end
+            obj.openAverage();
+            obj.app.statusLabel.Text = sprintf('Opened %d recordings. Review Overview and Settings, then press Run Analysis.',numel(obj.runs));
+            obj.app.setBanner(sprintf('Dataset opened: %d recordings. Nothing has been computed yet.',numel(obj.runs)),'info');
+            obj.refreshRecordingStatuses(); obj.app.showTab('overview'); obj.app.updateActions();
         end
         function updateDatasetProgress(obj,message,completed,total)
             obj.updateElapsed();
             if total>0
-                detail=sprintf('%s\n%d / %d dataset items read. Cancellation stops between reads.',message,completed,total);
-                obj.app.progressGauge.Value=100*completed/total;
-                obj.app.progressLabel.Text=sprintf('Dataset items: %d / %d',completed,total);
+                detail = sprintf('%s\n%d / %d dataset items read. Cancellation stops between reads.',message,completed,total);
+                obj.app.progressGauge.Value = 100*completed/total;
+                obj.app.progressLabel.Text = sprintf('Dataset items: %d / %d',completed,total);
             else
-                detail=char(string(message)+newline+"Reading the dataset index. Cancellation stops between reads.");
+                detail = char(string(message)+newline+"Reading the dataset index. Cancellation stops between reads.");
             end
-            obj.app.statusLabel.Text=char(message);
-            if ~isempty(obj.loadDialog) && isvalid(obj.loadDialog), obj.loadDialog.Message=detail; end
+            obj.app.statusLabel.Text = char(message);
+            if ~isempty(obj.loadDialog) && isvalid(obj.loadDialog), obj.loadDialog.Message = detail; end
             drawnow;
-            if ~isempty(obj.loadDialog) && isvalid(obj.loadDialog) && obj.loadDialog.CancelRequested, obj.cancelRequested=true; end
-            assert(~obj.cancelRequested,'SSDOT:Cancelled','Dataset loading cancelled. Previously loaded data is retained.');
+            if ~isempty(obj.loadDialog) && isvalid(obj.loadDialog) && obj.loadDialog.CancelRequested, obj.cancelRequested = true; end
+            assert(~obj.cancelRequested,'SSDOT:Cancelled','Opening cancelled. The previously opened dataset is retained.');
         end
         function closeLoadDialog(obj)
             if ~isempty(obj.loadDialog) && isvalid(obj.loadDialog), close(obj.loadDialog); end
-            obj.loadDialog=[];
+            obj.loadDialog = [];
         end
-        function browseDataset(obj)
-            initial=obj.environment.dataRoot; if strlength(obj.datasetRoot)>0, initial=obj.datasetRoot; end
-            chosen=uigetdir(char(initial),'Select dataset folder containing derivatives/, fw/ and atlasViewer.mat');
-            if ~isequal(chosen,0), obj.loadDataset(string(chosen)); end
+        function selectTableRow(obj,event)
+            if obj.busy || isempty(event.Indices) || isempty(obj.runs), return; end
+            index = event.Indices(1,1);
+            if index>=1 && index<=numel(obj.runs) && index~=obj.app.recordingDropDown.Value
+                obj.app.recordingDropDown.Value = index; obj.selectRecording();
+            end
         end
-        function selectRecording(obj,process)
-            if nargin<2, process=true; end
-            assert(~obj.busy || obj.batchActive,'SSDOT:Busy','Wait for the current operation.');
-            index=obj.app.recordingDropDown.Value;
-            if index==0, obj.selectedNode=[]; obj.app.runButton.Enable='off'; return; end
-            if ~isempty(obj.selectedNode) && obj.selectedNode~=obj.runs(index)
-                previous=obj.stateForNode(obj.selectedNode);
-                if previous.status~="Processing", previous.sensitivity=[]; previous.observations=[]; previous.spatialBasis=[]; end
+        function selectRecording(obj)
+            %SELECTRECORDING Display-only: never validates, loads models or reconstructs.
+            assert(~obj.busy,'SSDOT:Busy','Wait for the current analysis to finish before changing recordings.');
+            index = obj.app.recordingDropDown.Value;
+            if isempty(obj.runs) || index<1, return; end
+            node = obj.runs(index);
+            if ~isempty(obj.selectedNode) && obj.selectedNode~=node
+                previous = obj.stateForNode(obj.selectedNode);
+                previous.sensitivity = []; previous.observations = []; previous.spatialBasis = [];
             end
-            obj.selectedNode=obj.runs(index); state=obj.stateForNode(obj.selectedNode); obj.displayedState=state;
-            obj.app.profileDropDown.Value=char(state.runProfile); obj.app.deviceDropDown.Value=char(state.config.device);
-            obj.app.useCpuButton.Visible=matlab.lang.OnOffSwitchState(string(state.config.device)=="gpu" && ~obj.gpu.available);
-            obj.app.refreshSettings(state.config);
-            atlasPath=fullfile(obj.datasetRoot,'atlasViewer.mat'); if strlength(state.atlasFile)>0, atlasPath=state.atlasFile; end
-            obj.app.atlasPath.Value=char(atlasPath);
-            folder=obj.datasetRoot; if strlength(state.forwardFolder)>0, folder=state.forwardFolder; end
-            obj.app.forwardPath.Value=char(folder);
-            list=obj.selectedNode.acquired.GetMeasList(); pairs=unique(list(:,1:2),'rows','stable');
-            names=cellstr(compose('S%d-D%d',pairs(:,1),pairs(:,2)))';
-            for view={obj.app.raw,obj.app.od}
-                view{1}.channel.Items=names; view{1}.channel.ItemsData=1:size(pairs,1); view{1}.channel.Value=1;
-                wavelengths=obj.selectedNode.acquired.probe.wavelengths(:);
-                allLabel='All'; if numel(wavelengths)==2, allLabel='Both'; end
-                view{1}.signal.Items=[cellstr(compose('%g nm',wavelengths))',{allLabel}];
-                view{1}.signal.ItemsData=[1:numel(wavelengths),0]; view{1}.signal.Value=1;
-            end
-            obj.updateSignalAvailability(obj.app.raw,"Raw data"); obj.updateSignalAvailability(obj.app.od,"OD");
-            obj.destroyEmbeddedViews(); obj.app.runButton.Enable=matlab.lang.OnOffSwitchState(~obj.busy); obj.lastError=[];
-            obj.profileNotice(); if ~obj.busy, obj.app.statusLabel.Text='Ready: '+string(obj.selectedNode.name); end
-            obj.log('Selected '+string(obj.selectedNode.name));
-            if state.status~="Processing"
-                try
-                    obj.validateState(state);
-                    if obj.restoreResult(state), obj.showResult(state,false);
-                    elseif process && ~obj.busy, obj.runWorkflow(false); end
-                catch exception
-                    obj.markFailure(state,exception); obj.showError(exception); obj.releaseIntermediates(state);
-                end
-            end
+            obj.selectedNode = node; state = obj.stateForNode(node); obj.displayedState = state;
+            list = node.acquired.GetMeasList(); pairs = unique(list(:,1:2),'rows','stable');
+            view = obj.app.signals;
+            view.channel.Items = cellstr(compose('S%d-D%d',pairs(:,1),pairs(:,2)))'; view.channel.ItemsData = 1:size(pairs,1); view.channel.Value = 1;
+            wavelengths = node.acquired.probe.wavelengths(:);
+            allLabel = 'All'; if numel(wavelengths)==2, allLabel = 'Both'; end
+            view.signal.Items = [cellstr(compose('%g nm',wavelengths))',{allLabel}];
+            view.signal.ItemsData = [1:numel(wavelengths),0]; view.signal.Value = 1;
+            obj.destroyRoiViewer(); obj.lastError = [];
             if isempty(state.result)
-                obj.app.clearDataViews(); obj.app.resultLabel.Text=state.nodeName+" | "+state.status;
-                obj.app.renderActiveTab();
+                obj.app.clearDataViews();
+            else
+                obj.showResult(state,false);
             end
-            obj.trimResults(); obj.refreshRecordingStatuses();
+            obj.app.statusLabel.Text = char("Showing "+state.nodeName+" ("+obj.displayStatus(state)+").");
+            obj.log('Showing '+state.nodeName);
+            obj.app.renderActiveTab(); obj.refreshRecordingStatuses(); obj.app.updateActions();
         end
         function state = stateForNode(obj,node)
-            key=sprintf('%s:%s:%d:%d:%d:%d',node.type,node.name,node.iGroup,node.iSubj,node.iSess,node.iRun);
+            key = sprintf('%s:%s:%d:%d:%d:%d',node.type,node.name,node.iGroup,node.iSubj,node.iSess,node.iRun);
             if ~isKey(obj.states,key)
-                state=ssdot.app.ReconstructionState(); state.node=node; state.datasetRoot=obj.datasetRoot; state.nodeName=string(node.name);
-                profile=string(obj.app.profileDropDown.Value); if profile=="custom", profile="research"; end
-                state.config=ssdot.app.profileConfig(profile,string(obj.app.deviceDropDown.Value)); state.runProfile=profile;
-                state.previewDerived=profile=="preview";
-                state.atlasFile=fullfile(obj.datasetRoot,'atlasViewer.mat'); state.forwardFolder=obj.datasetRoot;
-                obj.states(key)=state;
+                state = ssdot.app.ReconstructionState(); state.node = node; state.datasetRoot = obj.datasetRoot; state.nodeName = string(node.name);
+                state.config = obj.config; state.runProfile = obj.profile; state.previewDerived = obj.previewDerived;
+                state.atlasFile = obj.atlasFile; state.forwardFolder = obj.forwardFolder;
+                obj.states(key) = state;
             end
-            state=obj.states(key);
+            state = obj.states(key);
         end
-        function pathsChanged(obj)
-            if obj.busy, return; end
-            obj.pendingInputs=[];
-            if ~isempty(obj.selectedNode)
-                state=obj.stateForNode(obj.selectedNode); state.atlasFile=string(obj.app.atlasPath.Value); state.forwardFolder=string(obj.app.forwardPath.Value);
-                state.result=[]; state.cacheKey=""; state.status="Waiting";
-            end
-            obj.app.statusLabel.Text='Input location changed. Validation runs before reconstruction.';
-            obj.log('Input paths edited; cached input validation invalidated.');
-        end
+
+        %% Workspace settings: never start computation
         function changeProfile(obj)
-            assert(~obj.busy,'SSDOT:Busy','Profile changes are disabled during processing.');
-            profile=string(obj.app.profileDropDown.Value);
-            if isempty(obj.selectedNode)
-                if profile~="custom", obj.app.refreshSettings(ssdot.app.profileConfig(profile,obj.app.deviceDropDown.Value)); end
-                obj.profileNotice(); return;
-            end
-            state=obj.stateForNode(obj.selectedNode);
+            assert(~obj.busy,'SSDOT:Busy','Profile changes are disabled during an analysis.');
+            profile = string(obj.app.profileDropDown.Value);
             if profile~="custom"
-                state.applyConfig(ssdot.app.profileConfig(profile,obj.app.deviceDropDown.Value));
-                state.previewDerived=profile=="preview";
+                obj.config = ssdot.app.profileConfig(profile,string(obj.app.deviceDropDown.Value));
+                obj.previewDerived = profile=="preview";
+                obj.app.refreshSettings(obj.config);
             end
-            state.runProfile=profile; obj.app.refreshSettings(state.config); obj.profileNotice(); obj.app.renderActiveTab();
+            obj.profile = profile; obj.settingsChanged('Profile: '+profile);
         end
-        function profileNotice(obj)
-            preview=string(obj.app.profileDropDown.Value)=="preview";
-            if ~isempty(obj.selectedNode), state=obj.stateForNode(obj.selectedNode); preview=preview || state.previewDerived; end
-            if preview
-                obj.app.banner.Text='COARSE PREVIEW - software check, not a scientifically validated reconstruction. Research defaults are available in Profile.';
-                if string(obj.app.profileDropDown.Value)=="custom"
-                    obj.app.banner.Text='COARSE PREVIEW - custom edits derived from preview settings. Not a scientifically validated reconstruction.';
-                end
-            else
-                obj.app.banner.Text='Research/custom reconstruction - parameters are in Advanced. Available memory is checked before allocation.';
+        function applySettings(obj)
+            assert(~obj.busy,'SSDOT:Busy','Settings are locked during an analysis.');
+            config = obj.app.readSettings(obj.config);
+            try
+                obj.validateConfig(config);
+            catch exception
+                obj.app.refreshSettings(obj.config); rethrow(exception);
             end
-            obj.app.runButton.Text='Recalculate';
-            if strlength(obj.fallbackNotice)>0, obj.app.banner.Text=obj.fallbackNotice+" "+string(obj.app.banner.Text); end
+            obj.config = config; obj.profile = "custom"; obj.app.profileDropDown.Value = 'custom';
+            obj.settingsChanged('Reconstruction settings edited');
         end
-        function applyAdvanced(obj)
-            assert(~obj.busy,'SSDOT:Busy','Settings are locked during processing.');
-            assert(~isempty(obj.selectedNode),'SSDOT:NoSelection','Select a recording before editing its settings.');
-            state=obj.stateForNode(obj.selectedNode); config=state.config; names=fieldnames(obj.app.settings);
-            for index=1:numel(names)
-                name=names{index}; value=obj.app.settings.(name).Value;
-                if any(strcmp(name,{'temporalRange','temporalParameters','noiseVariance'}))
-                    value=sscanf(char(value),'%f')';
-                    if isempty(value) && strcmp(name,'noiseVariance')
-                        if isfield(config,name), config=rmfield(config,name); end
-                        continue;
-                    end
-                end
-                config.(name)=value;
+        function settingsChanged(obj,message)
+            outdated = 0;
+            for state = obj.allStates()
+                if ~isempty(state.result) && ~obj.isCurrent(state), outdated = outdated+1; end
             end
-            obj.validateConfig(config); state.applyConfig(config); state.runProfile="custom";
-            obj.app.profileDropDown.Value='custom'; obj.profileNotice(); obj.log('Advanced parameters changed; dependent stages invalidated.');
+            obj.log(message+"; "+outdated+" existing result(s) now out of date.");
+            obj.updateProfileBanner(outdated);
+            obj.refreshRecordingStatuses(); obj.app.renderActiveTab(); obj.app.updateActions();
+        end
+        function updateProfileBanner(obj,outdated)
+            if nargin<2
+                outdated = sum(arrayfun(@(state)~isempty(state.result) && ~obj.isCurrent(state),obj.allStates()));
+            end
+            parts = strings(0,1);
+            if strlength(obj.fallbackNotice)>0, parts(end+1) = obj.fallbackNotice; end
+            if obj.previewDerived || obj.profile=="preview"
+                parts(end+1) = "COARSE PREVIEW settings: a software check, not a scientifically validated reconstruction.";
+            end
+            if outdated>0
+                parts(end+1) = sprintf('%d result(s) were computed with different settings and are marked Out of date. Press Run Analysis to update them.',outdated);
+            end
+            kind = "info"; if obj.previewDerived || outdated>0, kind = "warning"; end
+            obj.app.setBanner(strjoin(parts," "),kind);
         end
         function validateConfig(~,config)
-            for name={'brainSamplingThreshold','scalpSamplingThreshold','longSeparationThreshold','shortSeparationThreshold','alpha','beta'}
-                validateattributes(config.(name{1}),{'numeric'},{'scalar','finite','nonnegative'});
+            for name = {'brainSamplingThreshold','scalpSamplingThreshold','longSeparationThreshold','shortSeparationThreshold','alpha','beta'}
+                validateattributes(config.(name{1}),{'numeric'},{'scalar','finite','nonnegative'},'',name{1});
             end
-            for name={'brainSigma','scalpSigma'}, validateattributes(config.(name{1}),{'numeric'},{'scalar','finite','positive'}); end
-            validateattributes(config.driftOrder,{'numeric'},{'scalar','integer','nonnegative'});
-            validateattributes(config.temporalRange,{'numeric'},{'vector','numel',2,'finite'});
+            for name = {'brainSigma','scalpSigma'}, validateattributes(config.(name{1}),{'numeric'},{'scalar','finite','positive'},'',name{1}); end
+            validateattributes(config.driftOrder,{'numeric'},{'scalar','integer','nonnegative'},'','driftOrder');
+            validateattributes(config.temporalRange,{'numeric'},{'vector','numel',2,'finite'},'','temporalRange');
             assert(config.temporalRange(2)>config.temporalRange(1),'SSDOT:TemporalRange','Temporal range must increase.');
-            validateattributes(config.temporalParameters,{'numeric'},{'vector','numel',6,'finite'});
+            validateattributes(config.temporalParameters,{'numeric'},{'vector','numel',6,'finite'},'','temporalParameters');
             assert(any(string(config.temporalMode)==["professorOriginal","durationBased"]), ...
                 'SSDOT:TemporalMode','Choose professorOriginal or durationBased temporal processing.');
             assert(all(config.temporalParameters([1 4])>=0) && all(config.temporalParameters([2 5])>0) && ...
                 all(config.temporalParameters([3 6])>=0),'SSDOT:TemporalParameters', ...
                 'Gamma tau and smoothing durations must be nonnegative; sigma values must be positive.');
             assert(ismember(config.regularization,1:3),'SSDOT:Regularization','Invalid inverse selection.');
-            if isfield(config,'noiseVariance'), validateattributes(config.noiseVariance,{'numeric'},{'vector','positive','finite'}); end
+            if isfield(config,'noiseVariance'), validateattributes(config.noiseVariance,{'numeric'},{'vector','positive','finite'},'','noiseVariance'); end
         end
         function changeDevice(obj)
-            assert(~obj.busy,'SSDOT:Busy','Device changes are locked during processing.');
-            device=string(obj.app.deviceDropDown.Value); obj.fallbackNotice="";
-            if ~isempty(obj.selectedNode)
-                state=obj.stateForNode(obj.selectedNode); config=state.config; config.device=device; state.applyConfig(config);
-            end
+            assert(~obj.busy,'SSDOT:Busy','Device changes are locked during an analysis.');
+            device = string(obj.app.deviceDropDown.Value); obj.fallbackNotice = "";
+            obj.config.device = device;
             obj.checkGpu(false);
             if device=="gpu" && ~obj.gpu.available
-                obj.app.banner.Text='GPU requested: '+obj.gpu.message+' Use CPU explicitly to continue on CPU.';
-                obj.app.useCpuButton.Visible='on';
+                obj.app.setBanner('GPU requested: '+obj.gpu.message+' Choose Switch to CPU to continue on CPU.','warning');
+                obj.app.useCpuButton.Visible = 'on';
             else
-                obj.app.useCpuButton.Visible='off'; obj.profileNotice();
+                obj.app.useCpuButton.Visible = 'off';
             end
-            obj.log('Requested backend: '+device+'. No automatic fallback.');
-            obj.app.renderActiveTab();
+            obj.log('Requested device: '+device+'. No automatic fallback.');
+            if device~="gpu" || obj.gpu.available, obj.settingsChanged('Compute device: '+device); end
         end
         function useCpu(obj)
             if obj.busy, return; end
-            obj.app.deviceDropDown.Value='cpu'; obj.changeDevice();
-            obj.fallbackNotice="CPU explicitly selected by the user after GPU was requested. Scientific parameters are unchanged.";
-            obj.profileNotice(); obj.app.useCpuButton.Visible='off'; obj.log(obj.fallbackNotice);
+            obj.app.deviceDropDown.Value = 'cpu'; obj.changeDevice();
+            obj.fallbackNotice = "CPU explicitly selected by the user after GPU was requested. Scientific parameters are unchanged.";
+            obj.app.useCpuButton.Visible = 'off'; obj.log(obj.fallbackNotice); obj.updateProfileBanner();
         end
-        function checkGpu(obj,runComputation)
+        function pathsChanged(obj)
             if obj.busy, return; end
-            previous=obj.gpu; obj.gpu=ssdot.app.gpuDiagnostics(runComputation,~runComputation && string(obj.app.deviceDropDown.Value)=="cpu");
-            if ~runComputation && ~isempty(previous) && previous.computationPassed && obj.gpu.available && previous.name==obj.gpu.name
-                obj.gpu.computationPassed=true;
+            obj.atlasFile = string(obj.app.atlasPath.Value); obj.forwardFolder = string(obj.app.forwardPath.Value);
+            obj.pendingInputs = [];
+            obj.settingsChanged('Model inputs changed: atlas '+obj.atlasFile+', forward model '+obj.forwardFolder);
+        end
+        function browseAtlas(obj)
+            file = obj.chooser.openFile({'*.mat','AtlasViewer MAT file'},'Choose atlasViewer.mat',char(obj.atlasFile));
+            if strlength(file)>0, obj.app.atlasPath.Value = char(file); obj.pathsChanged(); end
+        end
+        function browseForwardModel(obj)
+            folder = obj.chooser.folder(obj.forwardFolder,'Choose the folder that contains fw/Adot.mat and fw/Adot_scalp.mat');
+            if strlength(folder)>0, obj.app.forwardPath.Value = char(folder); obj.pathsChanged(); end
+        end
+        function applyRoiSettings(obj)
+            assert(~obj.busy,'SSDOT:Busy','ROI settings are locked during an analysis.');
+            values = obj.app.readRoiSettings();
+            for name = string(fieldnames(values))'
+                validateattributes(values.(name),{'numeric'},{'scalar','finite','nonnegative'},'',name);
             end
-            obj.updateGpuDisplay();
-            if runComputation, obj.log('GPU diagnostic: '+obj.gpu.message); obj.app.showTab('diagnostics'); end
+            obj.roiSettings = values;
+            stale = sum(arrayfun(@(state)obj.roiStatus(state)=="stale",obj.allStates()));
+            obj.log(sprintf('ROI settings changed (fraction %.4g, non-ROI %.4g, exclusion %.4g); %d recording ROI set(s) need updating.', ...
+                values.upperThreshold,values.lowerThreshold,values.exclusionDistance,stale));
+            if stale>0
+                obj.app.setBanner(sprintf('ROI settings changed. Use Update ROIs in the ROI tab or Run Analysis to update %d ROI set(s); reconstructions are reused.',stale),'warning');
+            end
+            obj.refreshRecordingStatuses(); obj.app.updateActions();
         end
-        function updateGpuDisplay(obj)
-            obj.gpu.reconstructionValidated=obj.gpuReconstructionValidated;
-            memoryText="Unavailable";
-            if obj.gpu.available, memoryText=sprintf('%.2f GiB',obj.gpu.availableMemory/2^30); end
-            message=obj.gpu.message;
-            if obj.gpuReconstructionValidated && obj.gpu.available, message="A complete GPU-assisted reconstruction passed. See Log for recording/profile details."; end
-            text=sprintf('Hardware: %s\nParallel Computing Toolbox installed: %d\nLicense recognized: %d\nMATLAB device available: %d\nGPU memory budget available: %s\nAllocation/arithmetic test passed: %d\nFull GPU reconstruction validated: %d\n\n%s\n\nCompressed backend: exact temporal QR, bounded Gaussian/optical factors, and a direct dual inverse on the requested device. Dense-reference backend retains its CPU final inverse.', ...
-                obj.gpu.hardware,obj.gpu.installed,obj.gpu.licensed,obj.gpu.available,memoryText, ...
-                obj.gpu.computationPassed,obj.gpuReconstructionValidated,message);
-            obj.app.diagnosticText.Value=cellstr(splitlines(string(text)));
+        function report = readiness(obj)
+            %READINESS Cheap file-level check; full compatibility is verified by Run Analysis.
+            report = struct('datasetLoaded',~isempty(obj.runs),'modelReady',false,'canRun',false, ...
+                'missing',strings(0,1),'message',"");
+            if ~report.datasetLoaded
+                report.message = "Open a dataset folder to begin. Opening reads stored data only; it never starts an analysis.";
+                return;
+            end
+            required = [string(obj.atlasFile),fullfile(obj.forwardFolder,'fw','Adot.mat'),fullfile(obj.forwardFolder,'fw','Adot_scalp.mat')];
+            report.missing = required(~arrayfun(@isfile,required));
+            report.modelReady = isempty(report.missing);
+            report.canRun = report.modelReady && ~obj.busy;
+            if ~report.modelReady
+                report.message = "Cannot run yet. Missing model input(s):"+newline+strjoin("- "+report.missing,newline)+ ...
+                    newline+"Set Settings > Model inputs.";
+                return;
+            end
+            scope = string(obj.app.scopeDropDown.Value);
+            if scope=="selected", target = "the shown recording"; else, target = "all "+numel(obj.runs)+" recordings"; end
+            states = obj.allRecordingStates();
+            current = sum(arrayfun(@(state)obj.isCurrent(state),states));
+            device = upper(string(obj.config.device));
+            profileName = struct('research',"Research",'preview',"Preview",'custom',"Custom");
+            report.message = "Ready. Run Analysis processes "+target+" ("+profileName.(char(obj.profile))+", "+device+ ...
+                "): input checks, reconstruction and ROI."+newline+current+" of "+numel(obj.runs)+" recordings have current results.";
         end
-        function beginWork(obj)
-            assert(~obj.busy,'SSDOT:Busy','A job is already running.');
-            obj.busy=true; obj.cancelRequested=false; obj.startedAt=tic; obj.app.setBusy(true);
-            obj.clockTimer=timer('ExecutionMode','fixedSpacing','Period',1,'BusyMode','drop','TimerFcn',@(~,~)obj.updateElapsed());
-            start(obj.clockTimer); drawnow;
-        end
-        function finishWork(obj)
-            obj.updateElapsed(); obj.closeLoadDialog(); obj.stopClock(); obj.busy=false; obj.app.setBusy(false);
-            if obj.closeWhenIdle, delete(obj.app); end
-        end
-        function stopClock(obj)
-            if ~isempty(obj.clockTimer) && isvalid(obj.clockTimer), stop(obj.clockTimer); delete(obj.clockTimer); end
-            obj.clockTimer=[];
-        end
-        function updateElapsed(obj)
-            if isempty(obj.startedAt) || ~isvalid(obj.app.figure), return; end
-            elapsed=toc(obj.startedAt); obj.app.elapsedLabel.Text=sprintf('Elapsed %02d:%02d',floor(elapsed/60),floor(mod(elapsed,60)));
+
+        %% The single analysis action
+        function runAnalysis(obj,scope)
+            if obj.busy, return; end
+            if nargin<2, scope = string(obj.app.scopeDropDown.Value); end
+            assert(~isempty(obj.runs),'SSDOT:NoDataset','Open a dataset first.');
+            report = obj.readiness();
+            assert(report.modelReady,'SSDOT:MissingInputs','Required inputs missing: %s',strjoin(report.missing,newline));
+            obj.validateConfig(obj.config);
+            current = obj.app.recordingDropDown.Value;
+            if string(scope)=="selected", indices = current;
+            else, indices = [current,setdiff(1:numel(obj.runs),current,'stable')]; end
+            obj.processIndices(indices,string(scope));
         end
         function requestCancel(obj)
             if ~obj.busy, return; end
-            obj.cancelRequested=true; obj.app.statusLabel.Text='Cancel requested - stopping at the next safe boundary.';
+            obj.cancelRequested = true; obj.app.statusLabel.Text = 'Cancel requested - stopping at the next safe boundary.';
+            obj.app.stageLabel.Text = 'Cancelling...';
         end
-        function reportProgress(obj,label,current,total)
-            obj.updateElapsed();
-            if total>0
-                obj.app.progressLabel.Text=sprintf('%s: %d / %d',label,current,total);
-                obj.app.progressGauge.Value=100*(max(0,obj.currentStage-1)+min(1,current/total))/8;
-            else
-                obj.app.progressLabel.Text=char(string(label)+" - elapsed time varies");
-            end
-            drawnow limitrate;
-            assert(~obj.cancelRequested,'SSDOT:Cancelled','Processing cancelled. Valid completed stages are retained.');
-        end
-        function setStage(obj,index)
-            obj.currentStage=index; obj.stageStarted=tic;
-            data=obj.app.stageTable.Data; data{index,2}='Running'; obj.app.stageTable.Data=data;
-            obj.app.statusLabel.Text=sprintf('%d/8: %s',index,obj.stageNames{index});
-            obj.app.progressGauge.Value=100*(index-1)/8; obj.reportProgress(string(obj.stageNames{index}),0,0);
-            obj.log('Started '+string(obj.stageNames{index}));
-        end
-        function completeStage(obj)
-            data=obj.app.stageTable.Data; data{obj.currentStage,2}='Complete'; data{obj.currentStage,3}=toc(obj.stageStarted);
-            obj.app.stageTable.Data=data; obj.app.progressGauge.Value=100*obj.currentStage/8;
-        end
-        function runWorkflow(obj,focus)
-            if nargin<2, focus=true; end
-            if obj.busy, return; end
-            assert(~isempty(obj.selectedNode),'SSDOT:NoSelection','Select a recording first.');
-            state=obj.stateForNode(obj.selectedNode);
-            state.atlasFile=string(obj.app.atlasPath.Value); state.forwardFolder=string(obj.app.forwardPath.Value);
-            obj.processIndices(obj.app.recordingDropDown.Value,false,focus);
-        end
-        function processDataset(obj)
-            if obj.busy || isempty(obj.runs), return; end
-            index=obj.app.recordingDropDown.Value; if index==0, index=1; obj.app.recordingDropDown.Value=index; obj.selectRecording(false); end
-            mode=string(obj.app.processingModeDropDown.Value);
-            indices=index;
-            if mode~="selected", indices=[index,setdiff(1:numel(obj.runs),index,'stable')]; end
-            obj.processIndices(indices,mode=="automatic");
-        end
-        function processRemainder(obj)
-            if obj.busy, return; end
-            indices=obj.remainingIndices; obj.remainingIndices=[]; obj.app.setRemainder("");
-            obj.processIndices(indices,false);
-        end
-        function processIndices(obj,indices,automatic,focus)
-            if nargin<4, focus=true; end
+        function processIndices(obj,indices,scope)
+            if nargin<3, scope = "selected"; end
             if obj.busy || isempty(indices), return; end
-            obj.currentStage=0; obj.stageStarted=[];
-            obj.app.stageTable.Data=[cellstr(string(obj.stageNames(:))),repmat({'Pending'},8,1),num2cell(zeros(8,1))];
-            obj.batchActive=true; obj.beginWork(); cleanup=onCleanup(@()obj.finishBatch());
-            obj.lastError=[]; obj.app.errorDetails.Value={'No error.'};
-            obj.remainingIndices=[]; obj.app.setRemainder("");
-            calibrated=false; assessed=false; reference=[]; measured=0; eligible=indices;
-            for position=1:numel(indices)
+            obj.currentStage = 0; obj.stageStarted = []; obj.resetStageTable('Pending');
+            obj.batchActive = true; obj.batchCount = numel(indices); obj.batchPosition = 0;
+            obj.beginWork(); cleanup = onCleanup(@()obj.finishBatch());
+            obj.lastError = []; obj.app.errorDetails.Value = {'No error.'};
+            started = tic; outcomes = struct('name',{},'status',{},'message',{},'reused',{},'roiCounts',{});
+            obj.app.setBanner(sprintf('Running analysis on %d recording(s). Cancel stops at the next safe boundary.',numel(indices)),'info');
+            obj.log(sprintf('Run Analysis: %d recording(s), %s profile, %s.',numel(indices),obj.profile,obj.config.device));
+            cancelled = false;
+            for position = 1:numel(indices)
+                obj.batchPosition = position;
+                state = obj.stateForNode(obj.runs(indices(position)));
                 if obj.cancelRequested
-                    obj.remainingIndices=indices(position:end); obj.currentStage=1;
-                    obj.showError(MException('SSDOT:Cancelled','Processing cancelled before the next recording. Completed results are retained.')); break;
+                    % Cancelled between recordings: report it exactly like a cancel inside one.
+                    obj.showError(MException('SSDOT:Cancelled','Analysis cancelled before %s. Completed recordings are kept.',state.nodeName));
+                    if ~obj.isCurrent(state), state.status = "Cancelled"; state.message = "Cancelled. Press Run Analysis to resume."; end
+                    cancelled = true; obj.markNotRun(indices(position+1:end)); break;
                 end
-                if automatic && calibrated && ~assessed
-                    [eligible,resources]=obj.estimateQueue(indices(position:end)); assessed=true;
-                    if obj.cancelRequested
-                        obj.remainingIndices=eligible;
-                        obj.showError(MException('SSDOT:Cancelled','Batch assessment cancelled. Completed results are retained.')); break;
-                    end
-                    obj.batchEstimate=ssdot.app.estimateBatchCost(resources,reference,measured,obj.automaticBudgetSeconds);
-                    obj.log(sprintf('Remaining batch estimate: %.1f s. %s',obj.batchEstimate.totalSeconds,obj.batchEstimate.policy));
-                    if obj.batchEstimate.requiresConfirmation
-                        obj.remainingIndices=eligible;
-                        obj.app.setRemainder(sprintf('Process remaining %d recordings (conservative estimate %.0f s)',numel(eligible),obj.batchEstimate.totalSeconds));
-                        obj.app.banner.Text='Initial result ready. Confirm processing the more expensive remainder above.'; break;
-                    end
-                end
-                state=obj.stateForNode(obj.runs(indices(position)));
-                if assessed && ~ismember(indices(position),eligible), continue; end
+                obj.adoptWorkspaceSettings(state);
+                reused = false;
                 try
-                    obj.currentRunStartedAt=tic; obj.currentStage=0;
-                    obj.pendingInputs=obj.validateState(state);
+                    obj.currentRunStartedAt = tic; obj.currentStage = 0;
+                    obj.pendingInputs = obj.validateState(state);
                     if obj.restoreResult(state)
+                        reused = true;
+                        if isempty(state.brainMask), obj.loadPreparedInputs(state); end
+                        obj.ensureRois(state);
                         obj.log('Reused unchanged reconstruction: '+state.nodeName);
-                        obj.app.stageTable.Data=[cellstr(string(obj.stageNames(:))),repmat({'Reused'},8,1),num2cell(zeros(8,1))];
-                        if state.node==obj.selectedNode, obj.showResult(state,focus); end
-                        if ~isempty(state.resources), reference=state.resources; measured=max(1,state.result.provenance.elapsedSeconds); calibrated=true; end
-                        continue;
+                        obj.resetStageTable('Reused');
+                    else
+                        state.status = "Running"; state.message = ""; obj.refreshRecordingStatuses();
+                        obj.executeRecording(state);
+                        state.reconstructionCount = state.reconstructionCount+1;
+                        obj.cacheStatistics.solves = obj.cacheStatistics.solves+1;
+                        obj.saveResultCache(state);
                     end
-                    state.status="Processing"; state.message=""; obj.refreshRecordingStatuses();
-                    obj.executeRecording(state,focus);
-                    state.status="Completed"; state.message=""; state.reconstructionCount=state.reconstructionCount+1;
-                    obj.cacheStatistics.solves=obj.cacheStatistics.solves+1;
-                    measured=toc(obj.currentRunStartedAt); reference=state.resources; calibrated=true;
-                    obj.saveResultCache(state); obj.releaseIntermediates(state);
-                    obj.trimResults(); obj.refreshRecordingStatuses(); drawnow;
+                    state.status = "Completed"; state.origin = "analysis"; state.message = obj.roiSummary(state);
+                    if reused, state.message = "Reused unchanged result. "+state.message; end
+                    obj.releaseIntermediates(state); obj.trimResults();
+                    if state.node==obj.selectedNode, obj.showResult(state,true); end
                 catch exception
                     obj.markFailure(state,exception); obj.showError(exception); obj.releaseIntermediates(state);
                     if strcmp(exception.identifier,'SSDOT:Cancelled')
-                        state.status="Waiting"; state.message="Cancelled - retry to resume.";
-                        obj.remainingIndices=indices(position:end); obj.refreshRecordingStatuses(); break;
+                        state.status = "Cancelled"; state.message = "Cancelled. Press Run Analysis to resume.";
+                        cancelled = true; obj.markNotRun(indices(position+1:end));
                     end
-                    obj.refreshRecordingStatuses();
                 end
+                outcomes(end+1) = struct('name',state.nodeName,'status',state.status,'message',state.message, ...
+                    'reused',reused,'roiCounts',obj.roiCounts(state)); %#ok<AGROW>
+                obj.refreshRecordingStatuses(); drawnow limitrate;
+                if cancelled, break; end
             end
-            if ~isempty(obj.remainingIndices)
-                if strcmp(obj.app.processRemainingButton.Visible,'off'), obj.app.setRemainder('Resume remaining recordings'); end
-            elseif ~obj.cancelRequested
-                obj.app.progressLabel.Text='Dataset ready - processing queue finished.';
-                obj.app.progressGauge.Value=100;
-                statuses=string(obj.app.recordingStatusTable.Data(:,2));
-                obj.app.statusLabel.Text=sprintf('Queue finished: %d completed, %d waiting, %d failed, %d incompatible.', ...
-                    sum(statuses=="Completed"),sum(statuses=="Waiting"),sum(statuses=="Failed"),sum(statuses=="Incompatible"));
+            obj.lastRun = struct('scope',scope,'outcomes',outcomes,'cancelled',cancelled,'elapsedSeconds',toc(started));
+            if ~obj.closeWhenIdle, obj.summarizeRun(); end
+        end
+        function summarizeRun(obj)
+            outcomes = obj.lastRun.outcomes; statuses = string({outcomes.status});
+            completed = sum(statuses=="Completed"); failed = sum(statuses=="Failed" | statuses=="Incompatible");
+            emptyRois = sum(arrayfun(@(item)sum(item.roiCounts==0),outcomes));
+            obj.app.progressGauge.Value = 100;
+            if obj.lastRun.cancelled
+                text = string(sprintf('Analysis cancelled after %d of %d recording(s). Completed results are kept; press Run Analysis to resume.',completed,obj.batchCount));
+                kind = "warning";
+            elseif failed>0
+                text = string(sprintf('Analysis finished: %d completed, %d failed. See Overview for details and Log for technical errors.',completed,failed));
+                kind = "error";
+            else
+                text = string(sprintf('Analysis complete: %d recording(s) in %.0f s. ROIs calculated for every condition.',completed,obj.lastRun.elapsedSeconds));
+                if emptyRois>0, text = text+sprintf(' %d condition(s) had no vertices above the ROI threshold (empty ROI).',emptyRois); end
+                kind = "info";
             end
+            obj.app.statusLabel.Text = char(text); obj.app.progressLabel.Text = 'Finished.';
+            obj.app.stageLabel.Text = 'No analysis running.';
+            if kind=="info" && (obj.previewDerived || obj.profile=="preview")
+                text = text+" COARSE PREVIEW settings: not a scientifically validated reconstruction."; kind = "warning";
+            end
+            obj.app.setBanner(text,kind); obj.log(text);
         end
         function finishBatch(obj)
-            obj.pendingInputs=[]; obj.batchActive=false; obj.finishWork();
+            obj.pendingInputs = []; obj.batchActive = false;
+            obj.refreshRecordingStatuses(); obj.finishWork();
         end
-        function executeRecording(obj,state,focus)
-            obj.lastError=[]; obj.app.errorDetails.Value={'No error.'};
-            obj.app.stageTable.Data=[cellstr(string(obj.stageNames(:))),repmat({'Pending'},8,1),num2cell(zeros(8,1))];
-            obj.lastRunStats=struct('conflictingActionsDisabled',strcmp(obj.app.loadButton.Enable,'off') && strcmp(obj.app.deviceDropDown.Enable,'off'), ...
+        function markNotRun(obj,indices)
+            for index = indices
+                state = obj.stateForNode(obj.runs(index));
+                if ~obj.isCurrent(state), state.message = "Not run: analysis cancelled."; end
+            end
+        end
+        function adoptWorkspaceSettings(obj,state)
+            %ADOPTWORKSPACESETTINGS Explicit run input; changed fields invalidate dependent stages.
+            state.applyConfig(obj.config);
+            state.atlasFile = obj.atlasFile; state.forwardFolder = obj.forwardFolder;
+            state.runProfile = obj.profile; state.previewDerived = obj.previewDerived || obj.profile=="preview";
+        end
+        function executeRecording(obj,state)
+            obj.lastError = []; obj.app.errorDetails.Value = {'No error.'}; obj.resetStageTable('Pending');
+            obj.lastRunStats = struct('conflictingActionsDisabled',strcmp(obj.app.loadButton.Enable,'off') && strcmp(obj.app.deviceDropDown.Enable,'off'), ...
                 'startedFigures',numel(findall(groot,'Type','figure')),'profile',state.runProfile,'device',string(state.config.device));
-            for stage=1:8
-                obj.setStage(stage);
+            for stage = 1:numel(obj.stageNames)
+                obj.setStage(stage,state);
                 switch stage
                     case 1, obj.preflight(state,true);
                     case 2, obj.loadPreparedInputs(state);
@@ -448,77 +483,49 @@ classdef AppController < handle
                     case 4, obj.checkResources(state);
                     case 5, if isempty(state.spatialBasis), obj.generateSpatial(state); end
                     case 6, if isempty(state.observations) || ~isfield(state.observations,'nuisanceTemporal'), obj.prepareObservations(state); end
-                    case 7, obj.runReconstruction(state,false);
-                    case 8, if state.node==obj.selectedNode, obj.showResult(state,focus); end
+                    case 7, obj.runReconstruction(state);
+                    case 8, obj.computeRois(state);
                 end
                 obj.completeStage();
             end
-            obj.lastRunStats.elapsed=toc(obj.currentRunStartedAt); obj.lastRunStats.finishedFigures=numel(findall(groot,'Type','figure'));
+            obj.lastRunStats.elapsed = toc(obj.currentRunStartedAt); obj.lastRunStats.finishedFigures = numel(findall(groot,'Type','figure'));
             obj.log(sprintf('Completed %s on %s in %.2f s.',state.nodeName,state.config.device,obj.lastRunStats.elapsed));
         end
-        function [eligible,resources]=estimateQueue(obj,indices)
-            eligible=[]; resources=struct([]);
-            for index=indices
-                state=obj.stateForNode(obj.runs(index));
-                try
-                    obj.currentStage=0;
-                    inputs=obj.validateState(state);
-                    if obj.restoreResult(state), continue; end
-                    obj.pendingInputs=inputs; obj.preflight(state,true); obj.loadPreparedInputs(state);
-                    if isempty(state.temporalBasis), obj.prepareTemporal(state); end
-                    obj.checkResources(state);
-                    if isempty(resources), resources=state.resources; else, resources(end+1)=state.resources; end
-                    eligible(end+1)=index;
-                    obj.releaseIntermediates(state); obj.reportProgress("Assessing remaining recordings",numel(eligible),numel(indices));
-                catch exception
-                    if strcmp(exception.identifier,'SSDOT:Cancelled'), eligible=indices; return; end
-                    obj.markFailure(state,exception); obj.log(state.nodeName+": "+string(exception.message));
-                end
-            end
-            obj.refreshRecordingStatuses();
-        end
-        function refreshRecordingStatuses(obj)
-            data=cell(numel(obj.runs),3);
-            for index=1:numel(obj.runs)
-                state=obj.stateForNode(obj.runs(index)); data(index,:)={char(state.nodeName),char(state.status),char(state.message)};
-            end
-            obj.app.recordingStatusTable.Data=data;
-        end
         function markFailure(~,state,exception)
-            incompatible=["SSDOT:Probe","SSDOT:ModelMesh","SSDOT:RecordingSize","SSDOT:NoStimuli","SSDOT:Measurement", ...
+            incompatible = ["SSDOT:Probe","SSDOT:ModelMesh","SSDOT:RecordingSize","SSDOT:NoStimuli","SSDOT:Measurement", ...
                 "SSDOT:MissingProcessedData","SSDOT:Wavelength","SSDOT:DuplicateMeasurements","SSDOT:SensitivityChannels", ...
                 "SSDOT:NoLongChannels","SSDOT:NoShortChannels","SSDOT:Time"];
-            state.status="Failed"; if any(startsWith(string(exception.identifier),incompatible)), state.status="Incompatible"; end
-            state.result=[]; state.cacheKey="";
-            state.message=string(exception.identifier)+": "+string(exception.message);
+            state.status = "Failed"; if any(startsWith(string(exception.identifier),incompatible)), state.status = "Incompatible"; end
+            state.result = []; state.cacheKey = ""; state.roiAnalysis = [];
+            state.message = string(exception.message);
         end
-        function inputs=validateState(obj,state)
-            sourceFiles=ssdot.io.recordingFiles(obj.datasetRoot,state.node);
-            sourceIdentity=obj.sharedCache.filesIdentity(sourceFiles);
+        function inputs = validateState(obj,state)
+            sourceFiles = ssdot.io.recordingFiles(obj.datasetRoot,state.node);
+            sourceIdentity = obj.sharedCache.filesIdentity(sourceFiles);
             if strlength(state.sourceIdentity)>0 && sourceIdentity~=state.sourceIdentity
-                status=state.node.Load(); assert(status==0,'SSDOT:DatasetLoad','Failed reloading changed recording.');
-                obj.cacheStatistics.recordingReloads=obj.cacheStatistics.recordingReloads+1;
+                status = state.node.Load(); assert(status==0,'SSDOT:DatasetLoad','Failed reloading changed recording.');
+                obj.cacheStatistics.recordingReloads = obj.cacheStatistics.recordingReloads+1;
             end
-            state.sourceIdentity=sourceIdentity;
-            inputs=ssdot.io.checkWorkflowInputs(obj.datasetRoot,state.node,state.atlasFile,state.forwardFolder,obj.sharedCache);
-            algorithm=obj.sharedCache.algorithmIdentity();
+            state.sourceIdentity = sourceIdentity;
+            inputs = ssdot.io.checkWorkflowInputs(obj.datasetRoot,state.node,state.atlasFile,state.forwardFolder,obj.sharedCache);
+            algorithm = obj.sharedCache.algorithmIdentity();
             if state.inputFingerprint~=inputs.fingerprint || state.algorithmIdentity~=algorithm
-                state.sensitivity=[]; state.spatialBasis=[]; state.spatialCenters=[]; state.temporalBasis=[]; state.observations=[]; state.result=[];
-                state.status="Waiting";
+                state.sensitivity = []; state.spatialBasis = []; state.spatialCenters = []; state.temporalBasis = [];
+                state.observations = []; state.result = []; state.brainMask = [];
+                state.status = "Waiting";
             end
-            config=state.config; if isfield(config,'normalEquationChunk'), config=rmfield(config,'normalEquationChunk'); end
-            key=ssdot.io.valueHash({inputs.fingerprint,algorithm,orderfields(config)});
-            if strlength(state.cacheKey)>0 && state.cacheKey~=key, state.result=[]; state.status="Waiting"; end
-            state.inputFingerprint=inputs.fingerprint; state.algorithmIdentity=algorithm; state.cacheKey=key;
-            state.recordingSnapshot=inputs.recording; state.atlas=inputs.atlas;
+            key = ssdot.io.valueHash({inputs.fingerprint,algorithm,orderfields(stripRuntime(state.config))});
+            if strlength(state.cacheKey)>0 && state.cacheKey~=key, state.result = []; state.status = "Waiting"; end
+            state.inputFingerprint = inputs.fingerprint; state.algorithmIdentity = algorithm; state.cacheKey = key;
+            state.recordingSnapshot = inputs.recording; state.atlas = inputs.atlas;
         end
-        function found=restoreResult(obj,state)
-            found=~isempty(state.result); obj.accessClock=obj.accessClock+1; state.lastAccess=obj.accessClock;
+        function found = restoreResult(obj,state)
+            found = ~isempty(state.result) && strlength(state.cacheKey)>0; obj.accessClock = obj.accessClock+1; state.lastAccess = obj.accessClock;
             if ~found && strlength(state.cacheKey)>0
-                filename=obj.resultCacheFile(state);
+                filename = obj.resultCacheFile(state);
                 if isfile(filename)
                     try
-                        saved=load(filename,'ssdotCache'); item=saved.ssdotCache;
+                        saved = load(filename,'ssdotCache'); item = saved.ssdotCache;
                         assert(item.schemaVersion==2 && item.key==state.cacheKey && item.inputFingerprint==state.inputFingerprint);
                         assert(string(item.temporalMode)==string(state.config.temporalMode) && ...
                             isequal(item.gammaParameters,double(state.config.temporalParameters(:)')) && ...
@@ -526,150 +533,147 @@ classdef AppController < handle
                             'Cached temporal mode or gamma configuration does not match the selected settings.');
                         assert(size(item.result.hbo,1)==size(state.atlas.fwmodel.mesh.vertices,1) && isequal(size(item.result.hbo),size(item.result.hbr)));
                         assert(all(isfinite(item.result.hbo),'all') && all(isfinite(item.result.hbr),'all'));
-                        state.result=item.result; state.resources=item.resources; state.temporalBasis=item.temporalBasis; state.spatialCenters=item.spatialCenters;
-                        found=true; obj.cacheStatistics.diskHits=obj.cacheStatistics.diskHits+1;
+                        state.result = item.result; state.resources = item.resources; state.temporalBasis = item.temporalBasis; state.spatialCenters = item.spatialCenters;
+                        if isfield(item,'brainMask'), state.brainMask = item.brainMask; end
+                        found = true; obj.cacheStatistics.diskHits = obj.cacheStatistics.diskHits+1;
                     catch exception, obj.log('Ignoring unusable cache: '+string(exception.message)); end
                 end
             end
-            if found, state.status="Completed"; state.message="Cached result"; obj.cacheStatistics.resultHits=obj.cacheStatistics.resultHits+1; end
+            if found
+                state.status = "Completed"; state.origin = "analysis";
+                obj.cacheStatistics.resultHits = obj.cacheStatistics.resultHits+1;
+            end
         end
-        function filename=resultCacheFile(obj,state)
-            filename=fullfile(obj.environment.paths.cache,"ssdot-result-v2-"+state.cacheKey+".mat");
+        function filename = resultCacheFile(obj,state)
+            filename = fullfile(obj.environment.paths.cache,"ssdot-result-v2-"+state.cacheKey+".mat");
         end
         function saveResultCache(obj,state)
             try
-                ssdotCache=struct('schemaVersion',2,'key',state.cacheKey,'inputFingerprint',state.inputFingerprint, ...
+                ssdotCache = struct('schemaVersion',2,'key',state.cacheKey,'inputFingerprint',state.inputFingerprint, ...
                     'temporalMode',string(state.temporalBasis.temporalMode), ...
                     'gammaParameters',state.temporalBasis.gammaParameters, ...
                     'temporalImplementationVersion',state.temporalBasis.temporalImplementationVersion, ...
-                    'result',state.result,'resources',state.resources,'temporalBasis',state.temporalBasis,'spatialCenters',state.spatialCenters);
-                temporary=fullfile(obj.environment.paths.temporary,"ssdot-tmp-"+string(java.util.UUID.randomUUID())+".mat");
+                    'result',state.result,'resources',state.resources,'temporalBasis',state.temporalBasis, ...
+                    'spatialCenters',state.spatialCenters,'brainMask',state.brainMask);
+                temporary = fullfile(obj.environment.paths.temporary,"ssdot-tmp-"+string(java.util.UUID.randomUUID())+".mat");
                 save(temporary,'ssdotCache'); movefile(temporary,obj.resultCacheFile(state),'f');
                 ssdot.io.cleanRuntime(obj.environment.paths);
             catch exception, obj.log('Result is available in memory; disk cache failed: '+string(exception.message)); end
         end
         function releaseIntermediates(obj,state)
-            state.observations=[]; state.spatialBasis=[];
-            if state.node~=obj.selectedNode, state.sensitivity=[]; end
+            state.observations = []; state.spatialBasis = [];
+            if state.node~=obj.selectedNode, state.sensitivity = []; end
         end
         function trimResults(obj)
-            keys=obj.states.keys; total=0; ages=zeros(size(keys)); sizes=zeros(size(keys));
-            for index=1:numel(keys)
-                state=obj.states(keys{index}); value=state.result; info=whos('value'); sizes(index)=info.bytes; total=total+info.bytes; ages(index)=state.lastAccess;
+            states = obj.allStates(); total = 0; ages = zeros(size(states)); sizes = zeros(size(states));
+            for index = 1:numel(states)
+                value = states(index).result; info = whos('value'); sizes(index) = info.bytes; total = total+info.bytes; ages(index) = states(index).lastAccess;
             end
-            [~,order]=sort(ages);
-            for index=order
-                state=obj.states(keys{index});
+            [~,order] = sort(ages);
+            for index = order
+                state = states(index);
                 if total<=obj.resultMemoryLimitBytes, break; end
-                if state.node==obj.selectedNode || isempty(state.result), continue; end
-                if isfile(obj.resultCacheFile(state)), state.result=[]; total=total-sizes(index); end
+                if state.node==obj.selectedNode || isempty(state.result) || strlength(state.cacheKey)==0, continue; end
+                % The ROI analysis stays in memory and is revalidated against the restored values.
+                if isfile(obj.resultCacheFile(state)), state.result = []; total = total-sizes(index); end
             end
         end
         function preflight(obj,state,validated)
-            if nargin<3, validated=false; end
+            if nargin<3, validated = false; end
             obj.validateConfig(state.config);
             if string(state.config.device)=="gpu"
-                obj.gpu=ssdot.app.gpuDiagnostics(true); obj.updateGpuDisplay();
+                obj.gpu = ssdot.app.gpuDiagnostics(true); obj.updateGpuDisplay();
                 assert(obj.gpu.available && obj.gpu.computationPassed,'SSDOT:GPUUnavailable','GPU requested: %s Select CPU explicitly to continue on CPU.',obj.gpu.message);
             end
-            if ~validated, obj.pendingInputs=obj.validateState(state); end
+            if ~validated, obj.pendingInputs = obj.validateState(state); end
         end
         function loadPreparedInputs(obj,state,inputs)
-            if nargin<3, assert(~isempty(obj.pendingInputs),'SSDOT:Preflight','Check inputs first.'); inputs=obj.pendingInputs; end
-            state.atlas=inputs.atlas;
-            state.preparationKey=ssdot.io.valueHash({inputs.modelIdentity,inputs.recording.activeMeasurements,state.config.sensitivityThreshold,state.config.spatialRegularization,state.config.longSeparationThreshold});
+            if nargin<3, assert(~isempty(obj.pendingInputs),'SSDOT:Preflight','Check inputs first.'); inputs = obj.pendingInputs; end
+            state.atlas = inputs.atlas;
+            state.preparationKey = ssdot.io.valueHash({inputs.modelIdentity,inputs.recording.activeMeasurements,state.config.sensitivityThreshold,state.config.spatialRegularization,state.config.longSeparationThreshold});
             if isempty(state.sensitivity)
-                [value,found]=obj.sharedCache.get("sensitivity:"+state.preparationKey);
-                if ~found, value=ssdot.recon.prepareSensitivity(inputs.model,inputs.recording.activeMeasurements,state.config); obj.sharedCache.put("sensitivity:"+state.preparationKey,value); end
-                state.sensitivity=value;
+                [value,found] = obj.sharedCache.get("sensitivity:"+state.preparationKey);
+                if ~found, value = ssdot.recon.prepareSensitivity(inputs.model,inputs.recording.activeMeasurements,state.config); obj.sharedCache.put("sensitivity:"+state.preparationKey,value); end
+                state.sensitivity = value;
             end
-            state.inputFingerprint=inputs.fingerprint; state.recordingSnapshot=inputs.recording;
+            state.brainMask = state.sensitivity.M.mask_brain(:);
+            state.inputFingerprint = inputs.fingerprint; state.recordingSnapshot = inputs.recording;
             if state.config.regularization==2
                 if isfield(state.config,'noiseVariance')
                     validateattributes(state.config.noiseVariance,{'numeric'},{'vector','numel',2*numel(state.sensitivity.channels),'positive','finite'});
                 else
                     assert(exist('estimateMeasureNoise','file')==2,'SSDOT:MissingNoiseEstimator', ...
-                        'Noise-weighted mode requires explicit Advanced noise variances or estimateMeasureNoise on the path.');
+                        'Noise-weighted mode requires explicit noise variances in Settings or estimateMeasureNoise on the path.');
                 end
             end
-            if nargin<3, obj.pendingInputs.model=[]; end
+            if nargin<3, obj.pendingInputs.model = []; end
         end
         function checkResources(obj,state)
             assert(~isempty(state.sensitivity) && ~isempty(state.temporalBasis),'SSDOT:MissingBasis','Load sensitivity and prepare temporal basis first.');
             if isempty(state.spatialCenters)
-                key=ssdot.io.valueHash({state.preparationKey,state.config.brainSamplingThreshold,state.config.scalpSamplingThreshold});
-                [centers,found]=obj.sharedCache.get("centers:"+key);
+                key = ssdot.io.valueHash({state.preparationKey,state.config.brainSamplingThreshold,state.config.scalpSamplingThreshold});
+                [centers,found] = obj.sharedCache.get("centers:"+key);
                 if ~found
-                centers.brain=ssdot.recon.downsampleVertices(state.atlas.fwmodel.mesh.vertices(state.sensitivity.M.mask_brain,:), ...
-                    state.config.brainSamplingThreshold,@(done,total)obj.reportProgress("Brain sampling",done,total));
-                centers.scalp=ssdot.recon.downsampleVertices(state.atlas.fwmodel.mesh_scalp.vertices(state.sensitivity.M.mask_scalp,:), ...
-                    state.config.scalpSamplingThreshold,@(done,total)obj.reportProgress("Scalp sampling",done,total));
-                obj.sharedCache.put("centers:"+key,centers);
+                    centers.brain = ssdot.recon.downsampleVertices(state.atlas.fwmodel.mesh.vertices(state.sensitivity.M.mask_brain,:), ...
+                        state.config.brainSamplingThreshold,@(done,total)obj.reportProgress("Brain sampling",done,total));
+                    centers.scalp = ssdot.recon.downsampleVertices(state.atlas.fwmodel.mesh_scalp.vertices(state.sensitivity.M.mask_scalp,:), ...
+                        state.config.scalpSamplingThreshold,@(done,total)obj.reportProgress("Scalp sampling",done,total));
+                    obj.sharedCache.put("centers:"+key,centers);
                 end
-                state.spatialCenters=centers;
+                state.spatialCenters = centers;
             end
-            gpuMemory=Inf; if string(state.config.device)=="gpu", gpuMemory=obj.gpu.availableMemory; end
-            resources=ssdot.app.estimateResources(ssdot.io.readRun(state.node),state.sensitivity,state.spatialCenters,state.temporalBasis,state.config,[],gpuMemory);
+            gpuMemory = Inf; if string(state.config.device)=="gpu", gpuMemory = obj.gpu.availableMemory; end
+            resources = ssdot.app.estimateResources(ssdot.io.readRun(state.node),state.sensitivity,state.spatialCenters,state.temporalBasis,state.config,[],gpuMemory);
             if ~resources.hostFits
                 obj.sharedCache.releasePreparations();
-                keys=obj.states.keys;
-                for index=1:numel(keys)
-                    other=obj.states(keys{index}); if other~=state, other.sensitivity=[]; other.spatialBasis=[]; other.observations=[]; end
+                for other = obj.allStates()
+                    if other~=state, other.sensitivity = []; other.spatialBasis = []; other.observations = []; end
                 end
-                resources=ssdot.app.estimateResources(ssdot.io.readRun(state.node),state.sensitivity,state.spatialCenters,state.temporalBasis,state.config,[],gpuMemory);
+                resources = ssdot.app.estimateResources(ssdot.io.readRun(state.node),state.sensitivity,state.spatialCenters,state.temporalBasis,state.config,[],gpuMemory);
                 obj.log('Released recomputable preparation cache under RAM pressure; scientific settings retained.');
             end
-            resources.diskAvailableBytes=double(java.io.File(char(obj.environment.paths.cache)).getUsableSpace());
-            resources.diskFits=resources.outputBytes<=resources.diskAvailableBytes;
-            state.resources=resources; state.config.normalEquationChunk=resources.normalEquationChunk;
+            resources.diskAvailableBytes = double(java.io.File(char(obj.environment.paths.cache)).getUsableSpace());
+            resources.diskFits = resources.outputBytes<=resources.diskAvailableBytes;
+            state.resources = resources; state.config.normalEquationChunk = resources.normalEquationChunk;
             obj.log(sprintf('Resources (%s): %d brain / %d scalp kernels; design %.2f GiB instead of %.2f GiB expanded; additional host peak %.2f GiB, GPU %.2f GiB; disk scratch %.2f GiB, output budget %.2f GiB (%.2f GiB free).', ...
                 resources.backend,resources.brainKernels,resources.scalpKernels,resources.designBytes/2^30,resources.legacyDesignBytes/2^30, ...
                 resources.hostPeakBytes/2^30,resources.gpuPeakBytes/2^30,resources.scratchBytes/2^30,resources.outputBytes/2^30,resources.diskAvailableBytes/2^30));
-            assert(resources.hostFits,'SSDOT:HostMemory','The %s backend estimates %.2f GiB additional host memory, above the safety budget (%.2f GiB currently available). No resolution, precision or regularization was changed.',resources.backend,resources.hostPeakBytes/2^30,resources.hostAvailableBytes/2^30);
+            assert(resources.hostFits,'SSDOT:HostMemory','The %s backend estimates %.2f GiB additional host memory, above the safety budget (%.2f GiB currently available). Close other applications and run again; no resolution, precision or regularization was changed.',resources.backend,resources.hostPeakBytes/2^30,resources.hostAvailableBytes/2^30);
             assert(resources.diskFits,'SSDOT:DiskSpace','Insufficient free output disk space: %.2f GiB required, %.2f GiB available.',resources.outputBytes/2^30,resources.diskAvailableBytes/2^30);
             if string(state.config.device)=="gpu"
                 assert(resources.gpuFits,'SSDOT:GpuMemory','Estimated GPU working memory %.2f GiB exceeds available %.2f GiB. Free GPU memory or select CPU explicitly; scientific settings were not changed.',resources.gpuPeakBytes/2^30,resources.gpuAvailableBytes/2^30);
             end
         end
         function loadAtlas(obj,state,filename)
-            if nargin<3, filename=obj.app.atlasPath.Value; end
-            state.atlas=ssdot.io.loadAtlas(filename); state.atlasFile=string(filename);
-            state.sensitivity=[]; state.spatialBasis=[]; state.spatialCenters=[]; state.observations=[]; state.result=[];
-        end
-        function loadSensitivity(obj,state,folder)
-            if nargin<3, folder=obj.app.forwardPath.Value; end
-            assert(~isempty(state.atlas),'SSDOT:MissingAtlas','Load the atlas first.');
-            ssdot.io.assertCompatibleProbe(ssdot.io.recordingProbe(state.node.acquired),ssdot.io.atlasProbe(state.atlas));
-            recording=ssdot.io.readRun(state.node);
-            state.sensitivity=ssdot.io.loadSensitivity(folder,recording.activeMeasurements,state.config,state.atlas); state.forwardFolder=string(folder);
-            state.spatialBasis=[]; state.spatialCenters=[]; state.observations=[]; state.result=[];
+            if nargin<3, filename = obj.atlasFile; end
+            state.atlas = ssdot.io.loadAtlas(filename); state.atlasFile = string(filename);
+            state.sensitivity = []; state.spatialBasis = []; state.spatialCenters = []; state.observations = []; state.result = [];
         end
         function generateSpatial(obj,state)
             assert(~isempty(state.sensitivity),'SSDOT:MissingSensitivity','Load sensitivity first.');
-            s=state.sensitivity; c=state.config;
-            state.spatialKey=ssdot.io.valueHash({state.preparationKey,c.brainSamplingThreshold,c.scalpSamplingThreshold,c.brainSigma,c.scalpSigma,c.device});
-            [value,found]=obj.sharedCache.get("spatial:"+state.spatialKey);
-            if found, state.spatialBasis=value; return; end
-            state.spatialBasis=ssdot.recon.buildSpatialBasis(state.atlas,s.M,c.brainSamplingThreshold,c.scalpSamplingThreshold,c.brainSigma,c.scalpSigma, ...
+            s = state.sensitivity; c = state.config;
+            state.spatialKey = ssdot.io.valueHash({state.preparationKey,c.brainSamplingThreshold,c.scalpSamplingThreshold,c.brainSigma,c.scalpSigma,c.device});
+            [value,found] = obj.sharedCache.get("spatial:"+state.spatialKey);
+            if found, state.spatialBasis = value; return; end
+            state.spatialBasis = ssdot.recon.buildSpatialBasis(state.atlas,s.M,c.brainSamplingThreshold,c.scalpSamplingThreshold,c.brainSigma,c.scalpSigma, ...
                 s.Adot_orig,s.Adot_scalp_orig,c.device,@(done,total)obj.reportProgress("Spatial kernels",done,total),state.spatialCenters);
             obj.sharedCache.put("spatial:"+state.spatialKey,state.spatialBasis);
-            state.result=[];
+            state.result = [];
         end
         function prepareTemporal(~,state)
-            state.temporalBasis=ssdot.recon.buildTemporalBasis(ssdot.io.readRun(state.node),state.config); state.observations=[]; state.result=[];
+            state.temporalBasis = ssdot.recon.buildTemporalBasis(ssdot.io.readRun(state.node),state.config); state.observations = []; state.result = [];
         end
         function prepareObservations(~,state)
             assert(~isempty(state.sensitivity) && ~isempty(state.temporalBasis),'SSDOT:MissingBasis','Prepare sensitivity and temporal basis first.');
-            state.observations=ssdot.recon.buildObservations(ssdot.io.readRun(state.node),state.sensitivity,ssdot.io.atlasProbe(state.atlas),state.temporalBasis,state.config); state.result=[];
+            state.observations = ssdot.recon.buildObservations(ssdot.io.readRun(state.node),state.sensitivity,ssdot.io.atlasProbe(state.atlas),state.temporalBasis,state.config); state.result = [];
         end
-        function result = runReconstruction(obj,state,showResults)
-            if nargin<3, showResults=true; end
+        function result = runReconstruction(obj,state)
             assert(~isempty(state.spatialBasis) && ~isempty(state.observations),'SSDOT:MissingBasis','Prepare spatial bases and observations first.');
-            model=struct('forwardMatrix',state.sensitivity.A,'spatialBasis',state.spatialBasis,'temporalBasis',state.temporalBasis,'masks',state.sensitivity.M,'vertexCount',size(state.atlas.fwmodel.mesh.vertices,1));
-            if state.config.spatialRegularization, model.brainScaling=state.sensitivity.ll; end
-            result=ssdot.recon.reconstructImage(model,state.observations,state.config,@(label,done,total)obj.reportProgress(label,done,total));
-            elapsed=0; if ~isempty(obj.currentRunStartedAt), elapsed=toc(obj.currentRunStartedAt); end
-            result.provenance=struct('profile',state.runProfile,'config',state.config,'recording',state.nodeName, ...
+            model = struct('forwardMatrix',state.sensitivity.A,'spatialBasis',state.spatialBasis,'temporalBasis',state.temporalBasis,'masks',state.sensitivity.M,'vertexCount',size(state.atlas.fwmodel.mesh.vertices,1));
+            if state.config.spatialRegularization, model.brainScaling = state.sensitivity.ll; end
+            result = ssdot.recon.reconstructImage(model,state.observations,state.config,@(label,done,total)obj.reportProgress(label,done,total));
+            elapsed = 0; if ~isempty(obj.currentRunStartedAt), elapsed = toc(obj.currentRunStartedAt); end
+            result.provenance = struct('profile',state.runProfile,'config',state.config,'recording',state.nodeName, ...
                 'conditionNames',{state.temporalBasis.conditionNames},'device',string(state.config.device),'fallback',obj.fallbackNotice, ...
                 'temporalMode',string(state.temporalBasis.temporalMode), ...
                 'gammaParameters',state.temporalBasis.gammaParameters, ...
@@ -677,353 +681,733 @@ classdef AppController < handle
                 'temporalImplementationVersion',state.temporalBasis.temporalImplementationVersion, ...
                 'preview',state.previewDerived || state.runProfile=="preview",'elapsedSeconds',elapsed, ...
                 'inputFingerprint',state.inputFingerprint,'atlasFile',state.atlasFile,'forwardFolder',state.forwardFolder);
-            result.provenance.solverDiagnostics=result.solverDiagnostics;
+            result.provenance.solverDiagnostics = result.solverDiagnostics;
             if state.config.spatialRegularization
-                result.provenance.spatialOutputScaling="Professor-compatible division by last-wavelength brain sensitivity scale";
+                result.provenance.spatialOutputScaling = "Professor-compatible division by last-wavelength brain sensitivity scale";
             else
-                result.provenance.spatialOutputScaling="none";
+                result.provenance.spatialOutputScaling = "none";
             end
-            result.provenance.algorithmIdentity=state.algorithmIdentity; result.provenance.cacheKey=state.cacheKey;
+            result.provenance.algorithmIdentity = state.algorithmIdentity; result.provenance.cacheKey = state.cacheKey;
             assert(all(isfinite(result.hbo),'all') && all(isfinite(result.hbr),'all'),'SSDOT:NonfiniteResult','Reconstruction produced nonfinite values. Review the scientific settings and diagnostics.');
-            state.result=result;
-            if string(state.config.device)=="gpu", obj.gpuReconstructionValidated=true; obj.updateGpuDisplay(); end
-            if showResults, obj.showResult(state); end
+            state.result = result;
+            if string(state.config.device)=="gpu", obj.gpuReconstructionValidated = true; obj.updateGpuDisplay(); end
         end
-        function runSingleStage(obj)
+
+        %% ROI: derived from a result, recomputed without repeating the inverse
+        function computeRois(obj,state,settings)
+            %COMPUTEROIS Existing findRoi HbO-threshold rule for every condition.
+            if nargin<3, settings = obj.roiSettings; end
+            assert(~isempty(state.result),'SSDOT:MissingResult','ROI selection needs a reconstruction.');
+            assert(~isempty(state.atlas),'SSDOT:MissingAtlas','ROI selection needs the forward-model atlas.');
+            assert(~isempty(state.brainMask),'SSDOT:MissingBrainMask', ...
+                'The brain sensitivity mask for this result is unavailable. Run Analysis to calculate ROIs.');
+            surface = ssdot.io.surfaceFromAtlas(state.atlas);
+            names = obj.conditionNames(state);
+            rois = emptyRois();
+            for condition = 1:size(state.result.hbo,2)
+                if obj.busy, obj.reportProgress("ROI selection",condition-1,size(state.result.hbo,2)); end
+                [indices,nonRoi] = ssdot.recon.findRoi(state.result.hbo(:,condition),state.result.hbr(:,condition), ...
+                    struct('mask_brain',state.brainMask),surface.vertices,settings.upperThreshold,settings.lowerThreshold, ...
+                    settings.exclusionDistance,struct('original_ROI',0));
+                source = struct('kind',"Automatic findRoi HbO threshold",'condition',condition,'conditionName',names(condition), ...
+                    'upperThreshold',settings.upperThreshold,'lowerThreshold',settings.lowerThreshold, ...
+                    'exclusionDistance',settings.exclusionDistance,'node',state.nodeName,'resultProfile',state.runProfile);
+                rois(condition) = ssdot.io.roiFromIndices(surface,indices,nonRoi,"Auto ROI: condition "+names(condition),source);
+            end
+            state.roiAnalysis = struct('settings',settings,'resultKey',resultKey(state.result),'rois',rois);
+            obj.cacheStatistics.roiCalculations = obj.cacheStatistics.roiCalculations+1;
+            obj.log(state.nodeName+": "+obj.roiSummary(state));
+        end
+        function ensureRois(obj,state)
+            if obj.roiStatus(state)~="current", obj.computeRois(state); end
+        end
+        function updateRois(obj)
+            %UPDATEROIS Apply current ROI settings to existing results; no reconstruction.
             if obj.busy, return; end
+            obj.beginWork(); cleanup = onCleanup(@()obj.finishWork());
+            updated = 0; skipped = strings(0,1);
+            for state = obj.allStates()
+                if isempty(state.result) || obj.roiStatus(state)=="current", continue; end
+                if isempty(state.brainMask) || isempty(state.atlas), skipped(end+1) = state.nodeName; continue; end %#ok<AGROW>
+                obj.computeRois(state); updated = updated+1;
+            end
+            clear cleanup;
+            if ~isvalid(obj), return; end
+            text = string(sprintf('Updated ROIs for %d result(s) without reconstruction.',updated));
+            if ~isempty(skipped), text = text+" Run Analysis to calculate ROIs for: "+strjoin(skipped,", ")+"."; end
+            obj.app.statusLabel.Text = char(text); obj.app.setBanner(text,"info"); obj.log(text);
+            obj.refreshRecordingStatuses(); obj.app.renderActiveTab();
+        end
+        function rois = autoRois(obj,state)
+            rois = emptyRois();
+            if obj.roiStatus(state)=="current" || obj.roiStatus(state)=="stale", rois = state.roiAnalysis.rois; end
+        end
+        function rois = allRois(obj,state)
+            %ALLROIS Automatic ROIs first, then imported ROIs: the order used by views and exports.
+            rois = [orderfields(reshape(obj.autoRois(state),1,[])),orderfields(reshape(state.rois,1,[]))];
+        end
+        function status = roiStatus(obj,state)
+            %ROISTATUS none | missing | stale (settings changed) | current.
+            if isempty(state.result), status = "none"; return; end
+            analysis = state.roiAnalysis;
+            if isempty(analysis) || analysis.resultKey~=resultKey(state.result), status = "missing"; return; end
+            if ~isequal(analysis.settings,obj.roiSettings), status = "stale"; else, status = "current"; end
+        end
+        function counts = roiCounts(obj,state)
+            counts = zeros(1,0);
+            rois = obj.autoRois(state);
+            if ~isempty(rois), counts = arrayfun(@(roi)numel(roi.indices),rois); end
+        end
+        function text = roiSummary(obj,state)
+            switch obj.roiStatus(state)
+                case "none", text = ""; return;
+                case "missing", text = "ROI not calculated."; return;
+            end
+            rois = obj.autoRois(state); names = obj.conditionNames(state); parts = strings(1,numel(rois));
+            for index = 1:numel(rois)
+                count = numel(rois(index).indices);
+                if count==0, parts(index) = "condition "+names(index)+": empty";
+                else, parts(index) = "condition "+names(index)+": "+count+" vertices"; end
+            end
+            text = "ROI "+strjoin(parts,"; ")+".";
+            if obj.roiStatus(state)=="stale", text = text+" ROI settings changed since calculation."; end
+        end
+
+        %% Status and readiness
+        function current = isCurrent(obj,state)
+            current = ~isempty(state.result) && sameConfig(state.config,obj.config) && ...
+                string(state.atlasFile)==string(obj.atlasFile) && string(state.forwardFolder)==string(obj.forwardFolder);
+        end
+        function text = displayStatus(obj,state)
+            if state.status=="Running", text = "Running"; return; end
+            if any(state.status==["Failed","Incompatible","Cancelled"]), text = state.status; return; end
+            if isempty(state.result), text = "Not run"; return; end
+            if ~obj.isCurrent(state), text = "Out of date"; return; end
+            switch state.origin
+                case "session", text = "Restored";
+                otherwise, text = "Complete";
+            end
+        end
+        function refreshRecordingStatuses(obj)
+            data = cell(numel(obj.runs),7);
+            for index = 1:numel(obj.runs)
+                state = obj.stateForNode(obj.runs(index)); info = obj.recordingInfo(index);
+                details = state.message;
+                if strlength(details)==0 && ~isempty(state.result), details = obj.roiSummary(state); end
+                if obj.displayStatus(state)=="Out of date", details = "Settings changed after this result. "+details; end
+                data(index,:) = {char(state.nodeName),info.duration,info.channels,char(info.wavelengths),char(info.conditions), ...
+                    char(obj.displayStatus(state)),char(details)};
+            end
+            obj.app.recordingTable.Data = data;
+            report = obj.readiness(); obj.app.readinessLabel.Text = char(report.message);
+            if isempty(obj.runs)
+                obj.app.overviewSummary.Text = 'No dataset open.';
+            else
+                model = "Model inputs found: atlas and forward model (fw/Adot.mat, fw/Adot_scalp.mat). Compatibility with each recording is verified by Run Analysis.";
+                if ~report.modelReady, model = "Missing model input(s): "+strjoin(report.missing,"; "); end
+                obj.app.overviewSummary.Text = char("Dataset: "+obj.datasetRoot+newline+numel(obj.runs)+" recording(s). "+model);
+            end
+        end
+        function result = canSaveSession(obj)
+            result = false;
+            if isempty(obj.selectedNode), return; end
+            state = obj.stateForNode(obj.selectedNode);
+            result = ~isempty(state.result) || ~isempty(state.rois);
+        end
+        function result = hasExportableResults(obj)
+            result = any(arrayfun(@(state)~isempty(state.result) || ~isempty(state.rois) || strlength(state.cacheKey)>0,obj.allStates()));
+        end
+        function states = allStates(obj)
+            values = obj.states.values; states = ssdot.app.ReconstructionState.empty;
+            for index = 1:numel(values), states(end+1) = values{index}; end %#ok<AGROW>
+        end
+        function states = allRecordingStates(obj)
+            states = ssdot.app.ReconstructionState.empty;
+            for index = 1:numel(obj.runs), states(end+1) = obj.stateForNode(obj.runs(index)); end %#ok<AGROW>
+        end
+
+        %% Work lifecycle and progress
+        function checkGpu(obj,runComputation)
+            if obj.busy, return; end
+            previous = obj.gpu; obj.gpu = ssdot.app.gpuDiagnostics(runComputation,~runComputation && string(obj.app.deviceDropDown.Value)=="cpu");
+            if ~runComputation && ~isempty(previous) && previous.computationPassed && obj.gpu.available && previous.name==obj.gpu.name
+                obj.gpu.computationPassed = true;
+            end
+            obj.updateGpuDisplay();
+            if runComputation, obj.log('GPU diagnostic: '+obj.gpu.message); obj.app.showTab('log'); end
+        end
+        function updateGpuDisplay(obj)
+            obj.gpu.reconstructionValidated = obj.gpuReconstructionValidated;
+            memoryText = "Unavailable";
+            if obj.gpu.available, memoryText = sprintf('%.2f GiB',obj.gpu.availableMemory/2^30); end
+            message = obj.gpu.message;
+            if obj.gpuReconstructionValidated && obj.gpu.available, message = "A complete GPU-assisted reconstruction passed. See Log for recording/profile details."; end
+            text = sprintf('Hardware: %s\nParallel Computing Toolbox installed: %d\nLicense recognized: %d\nMATLAB device available: %d\nGPU memory budget available: %s\nAllocation/arithmetic test passed: %d\nFull GPU reconstruction validated: %d\n\n%s\n\nCompressed backend: exact temporal QR, bounded Gaussian/optical factors, and a direct dual inverse on the requested device.', ...
+                obj.gpu.hardware,obj.gpu.installed,obj.gpu.licensed,obj.gpu.available,memoryText, ...
+                obj.gpu.computationPassed,obj.gpuReconstructionValidated,message);
+            obj.app.diagnosticText.Value = cellstr(splitlines(string(text)));
+        end
+        function beginWork(obj)
+            assert(~obj.busy,'SSDOT:Busy','A job is already running.');
+            obj.busy = true; obj.cancelRequested = false; obj.startedAt = tic;
             try
-                assert(~isempty(obj.selectedNode),'SSDOT:NoSelection','Select a recording.');
-                obj.beginWork(); cleanup=onCleanup(@()obj.finishWork()); state=obj.stateForNode(obj.selectedNode);
-                obj.lastError=[]; obj.app.errorDetails.Value={'No error.'};
-                stage=string(obj.app.stageDropDown.Value); obj.log('Debug stage: '+stage);
-                keys=["check","load","temporal","spatial","observations","inverse","render"]; indices=[1 2 3 5 6 7 8];
-                obj.setStage(indices(keys==stage));
-                switch stage
-                    case "check", obj.preflight(state);
-                    case "load", obj.preflight(state); obj.loadPreparedInputs(state);
-                    case "temporal", obj.prepareTemporal(state);
-                    case "spatial", obj.checkResources(state); obj.generateSpatial(state);
-                    case "observations", obj.prepareObservations(state);
-                    case "inverse", obj.runReconstruction(state,false);
-                    case "render", obj.showResult(state);
-                end
-                obj.completeStage();
-                obj.app.statusLabel.Text='Debug stage complete: '+stage;
-            catch exception, obj.showError(exception); end
+                obj.app.setBusy(true);
+            catch exception
+                obj.busy = false; rethrow(exception);
+            end
+            obj.clockTimer = timer('ExecutionMode','fixedSpacing','Period',1,'BusyMode','drop','TimerFcn',@(~,~)obj.updateElapsed());
+            start(obj.clockTimer); drawnow;
+        end
+        function finishWork(obj)
+            obj.updateElapsed(); obj.closeLoadDialog(); obj.stopClock(); obj.busy = false;
+            if obj.closeWhenIdle, delete(obj.app); return; end
+            obj.app.setBusy(false);
+        end
+        function stopClock(obj)
+            if ~isempty(obj.clockTimer) && isvalid(obj.clockTimer), stop(obj.clockTimer); delete(obj.clockTimer); end
+            obj.clockTimer = [];
+        end
+        function updateElapsed(obj)
+            if isempty(obj.startedAt) || ~isvalid(obj.app) || ~isvalid(obj.app.figure), return; end
+            elapsed = toc(obj.startedAt); obj.app.elapsedLabel.Text = sprintf('Elapsed %02d:%02d',floor(elapsed/60),floor(mod(elapsed,60)));
+        end
+        function reportProgress(obj,label,current,total)
+            obj.updateElapsed();
+            stages = numel(obj.stageNames);
+            fraction = 0; if total>0, fraction = min(1,current/total); end
+            if obj.batchActive && obj.batchCount>0 && obj.currentStage>0
+                overall = ((obj.batchPosition-1)+(obj.currentStage-1+fraction)/stages)/obj.batchCount;
+                obj.app.progressGauge.Value = 100*min(1,max(0,overall));
+            end
+            if total>0, obj.app.progressLabel.Text = sprintf('%s: %d / %d',label,current,total);
+            else, obj.app.progressLabel.Text = char(label); end
+            drawnow limitrate;
+            assert(~obj.cancelRequested,'SSDOT:Cancelled','Analysis cancelled. Completed recordings are kept.');
+        end
+        function setStage(obj,index,state)
+            obj.currentStage = index; obj.stageStarted = tic;
+            data = obj.app.stageTable.Data; data{index,2} = 'Running'; obj.app.stageTable.Data = data;
+            prefix = ""; if obj.batchCount>1, prefix = sprintf('Recording %d of %d: ',obj.batchPosition,obj.batchCount); end
+            obj.app.stageLabel.Text = char(prefix+state.nodeName+newline+sprintf('Step %d of %d: %s',index,numel(obj.stageNames),obj.stageNames{index}));
+            obj.app.statusLabel.Text = char(prefix+obj.stageNames{index});
+            obj.reportProgress(string(obj.stageNames{index}),0,0);
+            obj.log('Started '+string(obj.stageNames{index})+' for '+state.nodeName);
+        end
+        function completeStage(obj)
+            data = obj.app.stageTable.Data; data{obj.currentStage,2} = 'Complete'; data{obj.currentStage,3} = toc(obj.stageStarted);
+            obj.app.stageTable.Data = data;
+        end
+        function resetStageTable(obj,status)
+            count = numel(obj.stageNames);
+            obj.app.stageTable.Data = [cellstr(string(obj.stageNames(:))),repmat({status},count,1),num2cell(zeros(count,1))];
         end
         function showError(obj,exception)
-            obj.lastError=exception;
-            if strcmp(exception.identifier,'SSDOT:Cancelled'), prefix='Cancelled'; else, prefix='Failed'; end
-            if obj.busy && obj.currentStage>=1 && obj.currentStage<=8
-                data=obj.app.stageTable.Data; data{obj.currentStage,2}=prefix;
-                if ~isempty(obj.stageStarted), data{obj.currentStage,3}=toc(obj.stageStarted); end
-                obj.app.stageTable.Data=data;
+            obj.lastError = exception;
+            if strcmp(exception.identifier,'SSDOT:Cancelled'), prefix = "Cancelled"; else, prefix = "Failed"; end
+            if obj.busy && obj.currentStage>=1 && obj.currentStage<=numel(obj.stageNames)
+                data = obj.app.stageTable.Data; data{obj.currentStage,2} = char(prefix);
+                if ~isempty(obj.stageStarted), data{obj.currentStage,3} = toc(obj.stageStarted); end
+                obj.app.stageTable.Data = data;
             end
-            obj.app.statusLabel.Text=prefix+": "+string(exception.message); obj.app.banner.Text=prefix+": "+string(exception.message);
-            obj.app.errorDetails.Value=cellstr(splitlines(string(getReport(exception,'extended','hyperlinks','off'))));
+            context = "";
+            if obj.batchActive && ~isempty(obj.runs) && obj.batchPosition>0, context = " (see Overview for each recording)"; end
+            obj.app.statusLabel.Text = char(prefix+": "+string(exception.message));
+            kind = "error"; if prefix=="Cancelled", kind = "warning"; end
+            obj.app.setBanner(prefix+": "+string(exception.message)+context,kind);
+            obj.app.errorDetails.Value = cellstr(splitlines(string(getReport(exception,'extended','hyperlinks','off'))));
             obj.log(string(exception.identifier)+": "+string(exception.message));
-            obj.app.retryButton.Enable=matlab.lang.OnOffSwitchState(~isempty(obj.selectedNode));
-            gpuFailure=strcmp(exception.identifier,'SSDOT:GPUUnavailable') || strcmp(exception.identifier,'SSDOT:GpuMemory') || ...
+            gpuFailure = strcmp(exception.identifier,'SSDOT:GPUUnavailable') || strcmp(exception.identifier,'SSDOT:GpuMemory') || ...
                 startsWith(string(exception.identifier),["parallel:gpu:","MATLAB:gpuArray:"]);
-            obj.app.useCpuButton.Visible=matlab.lang.OnOffSwitchState(string(obj.app.deviceDropDown.Value)=="gpu" && gpuFailure);
+            obj.app.useCpuButton.Visible = matlab.lang.OnOffSwitchState(string(obj.app.deviceDropDown.Value)=="gpu" && gpuFailure);
         end
+
+        %% Views: render what exists; never compute an analysis
         function showResult(obj,state,focus)
-            if nargin<3, focus=true; end
-            obj.displayedState=state;
+            if nargin<3, focus = true; end
             assert(~isempty(state.result),'SSDOT:MissingResult','No reconstruction is available.');
-            if isfield(state.result,'provenance') && isfield(state.result.provenance,'conditionNames')
-                names=string(state.result.provenance.conditionNames);
-            elseif ~isempty(state.temporalBasis), names=string(state.temporalBasis.conditionNames);
-            else, names=compose('Condition %d',1:size(state.result.hbo,2)); end
-            obj.app.conditionDropDown.Items=cellstr(names); obj.app.conditionDropDown.ItemsData=1:numel(names); obj.app.conditionDropDown.Value=1;
+            obj.displayedState = state;
+            names = obj.conditionNames(state);
+            previous = obj.app.conditionDropDown.Value;
+            obj.app.conditionDropDown.Items = cellstr("Condition "+names); obj.app.conditionDropDown.ItemsData = 1:numel(names);
+            if isnumeric(previous) && isscalar(previous) && previous>=1 && previous<=numel(names), obj.app.conditionDropDown.Value = previous;
+            else, obj.app.conditionDropDown.Value = 1; end
             if focus, obj.app.showTab('results'); else, obj.app.renderActiveTab(); end
         end
-        function renderView(obj)
-            if isempty(obj.selectedNode), return; end
-            state=obj.stateForNode(obj.selectedNode); active=obj.app.tabGroup.SelectedTab;
-            if obj.busy && isempty(state.result) && active~=obj.app.tabs.raw && active~=obj.app.tabs.od
-                return; % Existing result views remain available while the queue computes another recording.
+        function names = conditionNames(~,state)
+            count = size(state.result.hbo,2);
+            if isstruct(state.result) && isfield(state.result,'provenance') && isfield(state.result.provenance,'conditionNames')
+                names = string(state.result.provenance.conditionNames);
+            elseif isstruct(state.temporalBasis) && isfield(state.temporalBasis,'conditionNames')
+                names = string(state.temporalBasis.conditionNames);
+            else
+                names = string(1:count);
             end
-            if active==obj.app.tabs.raw, obj.renderSignals(obj.app.raw,"Raw data");
-            elseif active==obj.app.tabs.od, obj.renderSignals(obj.app.od,"OD");
-            elseif active==obj.app.tabs.sensitivity, obj.renderSensitivity(state);
+            names = reshape(names,1,[]);
+            if numel(names)~=count, names = string(1:count); end
+        end
+        function renderView(obj)
+            if isempty(obj.selectedNode), obj.showRoiPlaceholder('Open a dataset, then press Run Analysis to calculate ROIs.'); return; end
+            state = obj.stateForNode(obj.selectedNode); active = obj.app.tabGroup.SelectedTab;
+            if active==obj.app.tabs.signals, obj.renderSignals();
+            elseif active==obj.app.tabs.model
+                if obj.busy, return; end
+                obj.renderModel(state);
             elseif active==obj.app.tabs.results
-                if ~isempty(obj.displayedState), state=obj.displayedState; end
+                if ~isempty(obj.displayedState), state = obj.displayedState; end
                 obj.renderResult(state);
             elseif active==obj.app.tabs.roi
-                if isempty(state.atlas), obj.app.banner.Text='Run the workflow or load an atlas in Advanced to explore ROI selections.'; return; end
-                if isempty(obj.app.roiViewer) || ~isvalid(obj.app.roiViewer) || obj.app.roiViewer.state~=state
-                    if ~isempty(obj.app.roiViewer) && isvalid(obj.app.roiViewer), delete(obj.app.roiViewer); end
-                    obj.app.roiViewer=ssdot.app.RoiViewer(obj,state,obj.app.roiHost);
-                else, obj.app.roiViewer.refresh(); end
-                if obj.busy, obj.app.setBusy(true); end
+                if obj.busy, return; end
+                if ~isempty(obj.displayedState), state = obj.displayedState; end
+                obj.renderRoi(state);
+            elseif active==obj.app.tabs.average
+                if ~isempty(obj.app.averageViewer) && isvalid(obj.app.averageViewer), obj.app.averageViewer.refresh(); end
             end
         end
-        function renderSignals(obj,view,kind)
-            available=obj.updateSignalAvailability(view,kind);
+        function renderRoi(obj,state)
+            if isempty(state.atlas)
+                obj.destroyRoiViewer();
+                obj.showRoiPlaceholder(state.nodeName+": no result yet. Run Analysis calculates the ROI for every condition. "+ ...
+                    "To import an existing ROI before analysis, use Model > Load model for viewing first.");
+                return;
+            end
+            obj.app.roiPlaceholder.Visible = 'off';
+            if isempty(obj.app.roiViewer) || ~isvalid(obj.app.roiViewer) || obj.app.roiViewer.state~=state
+                obj.destroyRoiViewer();
+                obj.app.roiViewer = ssdot.app.RoiViewer(obj,state,obj.app.roiHost);
+            else
+                obj.app.roiViewer.updateSelections();
+            end
+        end
+        function showRoiPlaceholder(obj,text)
+            obj.app.roiPlaceholder.Text = char(text); obj.app.roiPlaceholder.Visible = 'on';
+        end
+        function renderSignals(obj)
+            view = obj.app.signals; kind = string(view.kind.Value);
+            available = obj.updateSignalAvailability(view,kind);
             if ~available, obj.showUnavailableSignal(view,view.notice.Text); return; end
-            ml=obj.selectedNode.acquired.GetMeasList(); pairs=unique(ml(:,1:2),'rows','stable'); pair=pairs(view.channel.Value,:);
-            signals=view.signal.Value; if signals==0, signals=1:numel(obj.selectedNode.acquired.probe.wavelengths); end
-            condition=""; if ~isempty(obj.selectedNode.CondNames), condition=string(obj.selectedNode.CondNames{1}); end
+            ml = obj.selectedNode.acquired.GetMeasList(); pairs = unique(ml(:,1:2),'rows','stable'); pair = pairs(view.channel.Value,:);
+            signals = view.signal.Value; if signals==0, signals = 1:numel(obj.selectedNode.acquired.probe.wavelengths); end
+            condition = ""; if ~isempty(obj.selectedNode.CondNames), condition = string(obj.selectedNode.CondNames{1}); end
             try
-                series=ssdot.io.extractTimeSeries(obj.selectedNode,kind,view.average.Value,pair(1),pair(2),signals,condition);
+                series = ssdot.io.extractTimeSeries(obj.selectedNode,kind,view.average.Value,pair(1),pair(2),signals,condition);
             catch exception
                 if ~strcmp(exception.identifier,'SSDOT:MissingSeries'), rethrow(exception); end
                 obj.showUnavailableSignal(view,exception.message); return;
             end
             cla(view.axes,'reset'); ssdot.viz.plotSignals(view.axes,series);
             if ~view.average.Value, ssdot.viz.plotStimuli(view.axes,ssdot.io.readStimuli(obj.selectedNode),obj.selectedNode.iRun,kind=="Raw data"); end
-            ylabel(view.axes,kind); hold(view.axes,'off');
+            label = "Optical density"; if kind=="Raw data", label = "Raw intensity"; end
+            ylabel(view.axes,label); hold(view.axes,'off');
         end
         function available = updateSignalAvailability(obj,view,kind)
-            continuous=ssdot.io.signalRepresentation(obj.selectedNode,kind,false);
-            averaged=[];
-            if kind~="Raw data", averaged=ssdot.io.signalRepresentation(obj.selectedNode,kind,true); end
-            hasContinuous=~isempty(continuous); hasAverage=~isempty(averaged);
-            view.average.Enable=matlab.lang.OnOffSwitchState(hasContinuous && hasAverage);
+            continuous = ssdot.io.signalRepresentation(obj.selectedNode,kind,false);
+            averaged = [];
+            if kind~="Raw data", averaged = ssdot.io.signalRepresentation(obj.selectedNode,kind,true); end
+            hasContinuous = ~isempty(continuous); hasAverage = ~isempty(averaged);
+            view.average.Enable = matlab.lang.OnOffSwitchState(hasContinuous && hasAverage && ~obj.busy);
             if ~hasAverage
-                view.average.Value=false;
-                view.average.Tooltip='This recording contains no saved averaged HRF. No average is generated automatically.';
+                view.average.Value = false;
+                view.average.Tooltip = 'This recording contains no saved averaged HRF. No average is generated automatically.';
             elseif ~hasContinuous
-                view.average.Value=true; view.average.Tooltip='Only the stored averaged representation is available.';
+                view.average.Value = true; view.average.Tooltip = 'Only the stored averaged representation is available.';
             else
-                view.average.Tooltip='Show the averaged HRF already stored in the Homer results.';
+                view.average.Tooltip = 'Show the averaged HRF already stored in the Homer results.';
             end
-            available=hasContinuous || hasAverage;
+            available = hasContinuous || hasAverage;
+            label = "optical density"; if kind=="Raw data", label = "raw intensity"; end
             if ~available
-                view.notice.Text='This recording contains no stored '+kind+' representation.';
+                view.notice.Text = 'This recording contains no stored '+label+'.';
             elseif view.average.Value
-                condition="unspecified"; if ~isempty(obj.selectedNode.CondNames), condition=string(obj.selectedNode.CondNames{1}); end
-                view.notice.Text='Showing stored averaged '+kind+' for condition '+condition+'.';
+                condition = "unspecified"; if ~isempty(obj.selectedNode.CondNames), condition = string(obj.selectedNode.CondNames{1}); end
+                view.notice.Text = 'Stored averaged '+label+' for condition '+condition+'.';
             elseif kind=="OD" && ~hasAverage
-                view.notice.Text='Showing continuous OD. Average HRF unavailable: Homer results contain no dodAvg.';
+                view.notice.Text = 'Stored continuous optical density. No stored average HRF (Homer results contain no dodAvg).';
             else
-                view.notice.Text='Showing stored continuous '+kind+'.';
+                view.notice.Text = 'Stored continuous '+label+'.';
             end
         end
         function showUnavailableSignal(~,view,message)
             cla(view.axes,'reset'); axis(view.axes,'off');
             text(view.axes,0.5,0.5,string(message),'Units','normalized','HorizontalAlignment','center','Interpreter','none');
-            view.notice.Text=string(message);
+            view.notice.Text = string(message);
         end
         function renderResult(obj,state)
             if isempty(state.result)
-                for ax=obj.app.resultAxes, cla(ax); axis(ax,'off'); end
-                obj.app.resultLabel.Text='No result for the current inputs and settings. Run reconstruction.'; return;
+                for ax = obj.app.resultAxes, cla(ax,'reset'); axis(ax,'off'); end
+                obj.app.resultLabel.Text = char(state.nodeName+": "+obj.displayStatus(state)+". Press Run Analysis to compute results.");
+                return;
             end
-            mesh=state.atlas.pialsurf.mesh_reduced;
+            mesh = state.atlas.pialsurf.mesh_reduced;
             assert(isequal(mesh.vertices,state.atlas.fwmodel.mesh.vertices),'SSDOT:MeshMismatch','Result and visualization mesh differ.');
-            condition=obj.app.conditionDropDown.Value; hb=lower(string(obj.app.chromophoreDropDown.Value)); values=state.result.(hb)(:,condition);
-            limits=[-1 1]*1e-9;
-            if startsWith(string(obj.app.scaleDropDown.Value),"Auto"), peak=max(abs(values)); if peak>0, limits=[-peak peak]; end; end
+            names = obj.conditionNames(state);
+            condition = obj.app.conditionDropDown.Value;
+            if ~isnumeric(condition) || condition<1 || condition>numel(names), condition = 1; end
+            hb = lower(string(obj.app.chromophoreDropDown.Value)); values = state.result.(hb)(:,condition);
+            limits = [-1 1]*1e-9;
+            if startsWith(string(obj.app.scaleDropDown.Value),"Auto"), peak = max(abs(values)); if peak>0, limits = [-peak peak]; end; end
             ssdot.viz.plotReconstruction(obj.app.resultAxes,state.atlas,values,limits,string(obj.app.chromophoreDropDown.Value));
-            profile=state.runProfile; if isfield(state.result,'provenance'), profile=string(state.result.provenance.profile); end
-            % Averaged and restored results carry temporal provenance but no recomputable basis object.
-            mode="unrecorded"; parameters="";
-            source=[]; if isfield(state.result,'provenance'), source=state.result.provenance; end
-            if (isempty(source) || ~isfield(source,'temporalMode')) && isstruct(state.temporalBasis), source=state.temporalBasis; end
-            if isstruct(source) && isfield(source,'temporalMode'), mode=string(source.temporalMode); end
-            if isstruct(source) && isfield(source,'gammaParameters'), parameters=strtrim(sprintf('%.4g ',source.gammaParameters)); end
-            obj.app.resultLabel.Text=sprintf('%s | %s | temporal %s | gamma [%s] s | condition %d | color range [%.3g, %.3g]. Display scaling preserves values.', ...
-                upper(profile),state.nodeName,mode,parameters,condition,limits(1),limits(2));
-            preview=state.previewDerived || profile=="preview";
-            if isfield(state.result,'provenance') && isfield(state.result.provenance,'preview'), preview=preview || state.result.provenance.preview; end
-            if preview, obj.app.resultLabel.Text='COARSE SOFTWARE PREVIEW - '+string(obj.app.resultLabel.Text); end
+            obj.app.resultLabel.Text = char(resultDescription(obj,state,names(condition),limits));
         end
-        function renderSensitivity(obj,state)
-            choice=string(obj.app.sensitivityMode.Value); axesPair=obj.app.sensitivityAxes;
+        function renderModel(obj,state)
+            choice = string(obj.app.modelMode.Value); axesPair = obj.app.modelAxes;
+            notice = obj.app.modelNotice;
             if choice=="Temporal basis"
-                assert(~isempty(state.temporalBasis),'SSDOT:MissingBasis','Prepare temporal basis or run reconstruction first.');
+                if isempty(state.temporalBasis), obj.modelUnavailable("The temporal basis is prepared by Run Analysis."); return; end
                 ssdot.viz.plotTemporalBasis(axesPair,state.temporalBasis);
-                return;
+                notice.Text = char(state.nodeName+": temporal basis used by the most recent analysis."); return;
             end
-            assert(~isempty(state.atlas),'SSDOT:MissingAtlas','Run reconstruction or load an atlas in Advanced.');
-            if choice=="Registered probe", ssdot.viz.plotProbe([],state.atlas,axesPair); return; end
+            if isempty(state.atlas), obj.modelUnavailable("Press Load model for viewing, or Run Analysis, to read the atlas."); return; end
+            if choice=="Registered probe"
+                ssdot.viz.plotProbe([],state.atlas,axesPair); notice.Text = char("Registered probe from "+state.atlasFile+"."); return;
+            end
             if contains(choice,"kernel centers")
-                assert(~isempty(state.spatialCenters),'SSDOT:MissingBasis','Prepare spatial bases first.');
-                tissue="scalp"; if startsWith(choice,"Brain"), tissue="brain"; end
+                if isempty(state.spatialCenters), obj.modelUnavailable("Kernel centers are prepared by Run Analysis."); return; end
+                tissue = "scalp"; if startsWith(choice,"Brain"), tissue = "brain"; end
                 ssdot.viz.plotKernelCenters(axesPair,state.atlas,state.spatialCenters.(tissue),tissue);
-                return;
+                notice.Text = char(state.nodeName+": "+tissue+" kernel centers for the most recent analysis."); return;
             end
             if isempty(state.sensitivity)
-                inputs=obj.validateState(state); obj.loadPreparedInputs(state,inputs);
+                obj.modelUnavailable("Sensitivity is released after analysis to save memory. Press Load model for viewing to display it."); return;
             end
-            assert(~isempty(state.sensitivity),'SSDOT:MissingSensitivity','Sensitivity will be available after the current processing step.');
-            tissue="scalp"; if startsWith(choice,"Brain"), tissue="brain"; end
+            tissue = "scalp"; if startsWith(choice,"Brain"), tissue = "brain"; end
             ssdot.viz.plotSensitivity(axesPair,state.atlas,state.sensitivity,tissue);
+            notice.Text = char(state.nodeName+": "+tissue+" sensitivity for the active measurements.");
+        end
+        function modelUnavailable(obj,message)
+            for ax = obj.app.modelAxes, delete(findall(ax,'Type','light')); cla(ax,'reset'); axis(ax,'off'); end
+            obj.app.modelNotice.Text = char(message);
+        end
+        function prepareModelView(obj)
+            %PREPAREMODELVIEW Explicit read of atlas and sensitivity for inspection; no reconstruction.
+            assert(~isempty(obj.selectedNode),'SSDOT:NoSelection','Open a dataset first.');
+            state = obj.stateForNode(obj.selectedNode);
+            if isempty(state.result), obj.adoptWorkspaceSettings(state); end
+            obj.beginWork(); cleanup = onCleanup(@()obj.finishWork());
+            obj.app.statusLabel.Text = 'Reading atlas and forward model for viewing...'; obj.app.progressLabel.Text = 'Reading model...'; drawnow;
+            obj.currentStage = 0;
+            inputs = obj.validateState(state); obj.loadPreparedInputs(state,inputs);
+            clear cleanup;
+            if ~isvalid(obj), return; end
+            obj.app.statusLabel.Text = char("Model loaded for viewing: "+state.nodeName+". No reconstruction was run.");
+            obj.log(obj.app.statusLabel.Text); obj.app.progressLabel.Text = '';
+            obj.app.renderActiveTab();
         end
         function window = openRoiViewer(obj,state)
-            obj.selectedNode=state.node; obj.app.tabGroup.SelectedTab=obj.app.tabs.roi; obj.app.renderActiveTab(); window=obj.app.roiViewer;
+            obj.selectedNode = state.node; obj.displayedState = state; obj.app.tabGroup.SelectedTab = obj.app.tabs.roi;
+            obj.app.renderActiveTab(); window = obj.app.roiViewer;
         end
-        function manifest=exportFigures(obj,parent)
-            assert(~obj.busy,'SSDOT:Busy','Wait for processing to finish before exporting.');
-            assert(~isempty(obj.runs),'SSDOT:NoSelection','Load a dataset before exporting figures.');
-            options=struct(); fields=fieldnames(obj.app.exportSettings);
-            for index=1:numel(fields), options.(fields{index})=obj.app.exportSettings.(fields{index}).Value; end
-            options.formats=strings(0,1);
-            for format=["png","pdf","fig"], if options.(format), options.formats(end+1)=format; end; end
-            assert(~isempty(options.formats),'SSDOT:ExportFormat','Choose an export format in Advanced > Figure export.');
-            assert(any([options.maps options.temporal options.kernels options.rois options.inputViews]),'SSDOT:ExportContent','Choose at least one figure type in Advanced > Figure export.');
-            options.autoColor=startsWith(string(obj.app.scaleDropDown.Value),"Auto"); options.showNonRoi=true;
+
+        %% Export and sessions
+        function manifest = exportFigures(obj,parent)
+            assert(~obj.busy,'SSDOT:Busy','Wait for the analysis to finish before exporting.');
+            assert(~isempty(obj.runs),'SSDOT:NoSelection','Open a dataset before exporting figures.');
+            options = struct(); fields = fieldnames(obj.app.exportSettings);
+            for index = 1:numel(fields), options.(fields{index}) = obj.app.exportSettings.(fields{index}).Value; end
+            options.formats = strings(0,1);
+            for format = ["png","pdf","fig"], if options.(format), options.formats(end+1) = format; end; end
+            assert(~isempty(options.formats),'SSDOT:ExportFormat','Choose an export format in Settings > Figure export.');
+            assert(any([options.maps options.temporal options.kernels options.rois options.inputViews]),'SSDOT:ExportContent','Choose at least one figure type in Settings > Figure export.');
+            options.autoColor = startsWith(string(obj.app.scaleDropDown.Value),"Auto"); options.showNonRoi = true;
             if string(options.scope)=="selected", assert(~isempty(obj.selectedNode),'SSDOT:NoSelection','Select a recording to export.'); end
-            keys=obj.states.keys; states={}; inputFolders=string(obj.datasetRoot);
-            for index=1:numel(keys)
-                state=obj.states(keys{index});
-                if options.scope=="selected" && state.node~=obj.selectedNode, continue; end
-                states{end+1}=state; %#ok<AGROW>
-                inputFolders(end+1)=string(fileparts(state.atlasFile)); inputFolders(end+1)=fullfile(state.forwardFolder,'fw'); %#ok<AGROW>
+            states = {}; inputFolders = string(obj.datasetRoot);
+            for state = obj.allStates()
+                if options.scope=="selected" && ~isequal(state,obj.displayedState) && state.node~=obj.selectedNode, continue; end
+                states{end+1} = state; %#ok<AGROW>
+                inputFolders(end+1) = string(fileparts(state.atlasFile)); inputFolders(end+1) = fullfile(state.forwardFolder,'fw'); %#ok<AGROW>
             end
             assert(~isempty(states),'SSDOT:NoSelection','Select a recording to export.');
-            % Stable names/order independent of the cache map's insertion order.
-            names=cellfun(@(state)char(string(state.node.type)+":"+state.nodeName),states,'UniformOutput',false);
-            [~,order]=sort(names); states=states(order);
+            % Stable names/order independent of the state map's insertion order.
+            names = cellfun(@(state)char(string(state.node.type)+":"+state.nodeName),states,'UniformOutput',false);
+            [~,order] = sort(names); states = states(order);
             if nargin<2
-                initial=obj.environment.paths.figures;
+                initial = obj.environment.paths.figures;
                 if ~isfolder(initial), mkdir(initial); end
-                obj.log('Choosing figure export destination.');
-                parent=uigetdir(char(initial),'Choose export destination - a new dated subfolder will be created');
-                if isequal(parent,0), manifest=[]; return; end
-                obj.log('Figure export destination: '+string(parent));
+                parent = obj.chooser.folder(initial,'Choose export destination - a new dated subfolder will be created');
+                if strlength(parent)==0, manifest = []; return; end
             end
-            folder=ssdot.io.createFigureExportFolder(parent,unique(inputFolders));
+            folder = ssdot.io.createFigureExportFolder(parent,unique(inputFolders));
             obj.log('Creating figure export: '+string(folder));
-            manifest=struct('schemaVersion',1,'status',"processing",'createdUtc',string(datetime('now','TimeZone','UTC')), ...
+            manifest = struct('schemaVersion',1,'status',"processing",'createdUtc',string(datetime('now','TimeZone','UTC')), ...
                 'datasetRoot',obj.datasetRoot,'folder',string(folder),'options',options,'records',{{}}, ...
                 'note',"Figures render existing computed snapshots. Input images are not copied. No reconstruction, ROI selection, coordinate conversion or simulation is performed.");
-            obj.app.statusLabel.Text='Preparing figure export.';
-            obj.currentStage=0; obj.beginWork(); cleanup=onCleanup(@()obj.finishWork());
-            obj.lastError=[]; obj.app.errorDetails.Value={'No error.'}; fileCount=0; failed=0;
+            obj.app.statusLabel.Text = 'Preparing figure export.';
+            obj.currentStage = 0; obj.beginWork(); cleanup = onCleanup(@()obj.finishWork());
+            obj.lastError = []; obj.app.errorDetails.Value = {'No error.'}; fileCount = 0; failed = 0;
             ssdot.io.writeFigureManifest(folder,manifest);
-            for index=1:numel(states)
-                state=states{index};
-                item=struct('name',state.nodeName,'folder',"",'status',"processing",'profile',state.runProfile, ...
+            for index = 1:numel(states)
+                state = states{index};
+                item = struct('name',state.nodeName,'folder',"",'status',"processing",'profile',state.runProfile, ...
                     'config',state.config,'inputFingerprint',state.inputFingerprint,'algorithmIdentity',state.algorithmIdentity, ...
-                    'provenance',[],'files',[],'skipped',strings(0,1),'error',"");
-                manifest.records{end+1}=item;
+                    'current',obj.isCurrent(state),'provenance',[],'files',[],'skipped',strings(0,1),'error',"");
+                manifest.records{end+1} = item;
                 try
                     obj.exportProgress("Preparing "+state.nodeName,index-1,numel(states));
                     if isempty(state.result) && strlength(state.cacheKey)>0, obj.restoreResult(state); end
-                    available=~isempty(state.result) || ~isempty(state.rois) || ~isempty(state.temporalBasis) || ~isempty(state.spatialCenters);
+                    available = ~isempty(state.result) || ~isempty(state.rois) || ~isempty(state.temporalBasis) || ~isempty(state.spatialCenters);
                     if ~available && ~options.inputViews
-                        manifest.records{end}.status="skipped"; manifest.records{end}.skipped="No computed figures available. Process the recording first.";
+                        manifest.records{end}.status = "skipped"; manifest.records{end}.skipped = "No computed figures available. Run Analysis first.";
                         continue;
                     end
-                    needsAtlas=(options.maps && ~isempty(state.result)) || (options.rois && ~isempty(state.rois)) || (options.kernels && ~isempty(state.spatialCenters));
+                    rois = obj.allRois(state);
+                    needsAtlas = (options.maps && ~isempty(state.result)) || (options.rois && ~isempty(rois)) || (options.kernels && ~isempty(state.spatialCenters));
                     assert(~needsAtlas || ~isempty(state.atlas),'SSDOT:MissingAtlas','No loaded atlas is available for %s.',state.nodeName);
-                    if ~isempty(state.result) && isfield(state.result,'provenance'), manifest.records{end}.provenance=state.result.provenance; end
-                    stem=regexprep(char(state.nodeName),'[^a-zA-Z0-9._-]','_'); stem=stem(1:min(55,numel(stem)));
-                    relative=sprintf('%03d_%s',index,stem); output=fullfile(folder,relative); mkdir(output);
-                    manifest.records{end}.folder=string(relative);
-                    data=obj.exportData(state,options);
-                    report=ssdot.viz.exportFigures(data,output,options,@capture);
-                    manifest.records{end}.files=report.files; manifest.records{end}.skipped=report.skipped;
-                    manifest.records{end}.status="complete";
+                    if ~isempty(state.result) && isfield(state.result,'provenance'), manifest.records{end}.provenance = state.result.provenance; end
+                    stem = regexprep(char(state.nodeName),'[^a-zA-Z0-9._-]','_'); stem = stem(1:min(55,numel(stem)));
+                    relative = sprintf('%03d_%s',index,stem); output = fullfile(folder,relative); mkdir(output);
+                    manifest.records{end}.folder = string(relative);
+                    data = obj.exportData(state,options,rois);
+                    report = ssdot.viz.exportFigures(data,output,options,@capture);
+                    manifest.records{end}.files = report.files; manifest.records{end}.skipped = report.skipped;
+                    manifest.records{end}.status = "complete";
                 catch exception
-                    manifest.records{end}.error=string(exception.identifier)+": "+string(exception.message);
+                    manifest.records{end}.error = string(exception.identifier)+": "+string(exception.message);
                     if strcmp(exception.identifier,'SSDOT:Cancelled')
-                        manifest.records{end}.status="cancelled"; manifest.status="cancelled"; obj.showError(exception); break;
+                        manifest.records{end}.status = "cancelled"; manifest.status = "cancelled"; obj.showError(exception); break;
                     end
-                    manifest.records{end}.status="failed"; failed=failed+1; obj.showError(exception);
+                    manifest.records{end}.status = "failed"; failed = failed+1; obj.showError(exception);
                 end
                 ssdot.io.writeFigureManifest(folder,manifest); obj.trimResults();
             end
             if manifest.status~="cancelled"
-                manifest.status="complete"; if failed>0, manifest.status="completeWithErrors"; end
-                obj.app.progressGauge.Value=100;
-                obj.app.statusLabel.Text=sprintf('Exported %d files to %s (%d failed recordings).',fileCount,folder,failed);
-                obj.app.progressLabel.Text='Figure export complete.';
+                manifest.status = "complete"; if failed>0, manifest.status = "completeWithErrors"; end
+                obj.app.progressGauge.Value = 100;
+                obj.app.statusLabel.Text = sprintf('Exported %d files to %s (%d failed recordings).',fileCount,folder,failed);
+                obj.app.progressLabel.Text = 'Figure export complete.';
                 obj.log(obj.app.statusLabel.Text);
+                if failed==0, obj.app.setBanner(obj.app.statusLabel.Text,"info"); end
             end
-            ssdot.io.writeFigureManifest(folder,manifest); obj.lastExport=manifest;
-            obj.refreshRecordingStatuses();
+            ssdot.io.writeFigureManifest(folder,manifest); obj.lastExport = manifest;
             function capture(message,completed,total,report)
-                manifest.records{end}.files=report.files; manifest.records{end}.skipped=report.skipped;
-                fileCount=sum(cellfun(@(record)numel(record.files),manifest.records));
+                manifest.records{end}.files = report.files; manifest.records{end}.skipped = report.skipped;
+                fileCount = sum(cellfun(@(record)numel(record.files),manifest.records));
                 if completed>0, ssdot.io.writeFigureManifest(folder,manifest); end
                 obj.exportProgress(message,index-1+completed/max(1,total),numel(states));
             end
         end
         function exportProgress(obj,message,completed,total)
-            obj.app.statusLabel.Text=char(message); obj.app.progressLabel.Text='Exporting figures - cancellation stops between files.';
-            obj.app.progressGauge.Value=min(100,100*completed/max(1,total)); obj.updateElapsed(); drawnow;
+            obj.app.statusLabel.Text = char(message); obj.app.progressLabel.Text = 'Exporting figures - cancellation stops between files.';
+            obj.app.progressGauge.Value = min(100,100*completed/max(1,total)); obj.updateElapsed(); drawnow;
             assert(~obj.cancelRequested,'SSDOT:Cancelled','Figure export cancelled. Completed files and a partial manifest are retained.');
         end
-        function data=exportData(obj,state,options)
-            data=struct('label',state.nodeName,'atlas',state.atlas,'result',state.result,'temporal',state.temporalBasis, ...
-                'centers',state.spatialCenters,'rois',state.rois,'comparison',[],'sensitivity',[], ...
+        function data = exportData(obj,state,options,rois)
+            if nargin<4, rois = obj.allRois(state); end
+            data = struct('label',state.nodeName,'atlas',state.atlas,'result',state.result,'temporal',state.temporalBasis, ...
+                'centers',state.spatialCenters,'rois',rois,'comparison',[],'sensitivity',[], ...
                 'preview',state.previewDerived || state.runProfile=="preview",'signals',struct('raw',[],'od',[],'stimuli',[],'runIndex',1));
-            viewer=obj.app.roiViewer;
-            if ~isempty(viewer) && isvalid(viewer) && viewer.state==state && viewer.mode.Value~="single" && viewer.firstSelection.Value>0 && viewer.secondSelection.Value>0
-                data.comparison=struct('first',viewer.firstSelection.Value,'second',viewer.secondSelection.Value,'mode',string(viewer.mode.Value));
-            end
+            viewer = obj.app.roiViewer;
+            if ~isempty(viewer) && isvalid(viewer) && viewer.state==state, data.comparison = viewer.comparison(); end
             if ~options.inputViews, return; end
             if isa(state.node,'RunClass')
-                data.signals.stimuli=ssdot.io.readStimuli(state.node); data.signals.runIndex=state.node.iRun;
-                list=state.node.acquired.GetMeasList(); pairs=unique(list(:,1:2),'rows','stable');
-                for kind=["raw","od"]
-                    view=obj.app.(kind); channel=view.channel.Value;
+                data.signals.stimuli = ssdot.io.readStimuli(state.node); data.signals.runIndex = state.node.iRun;
+                list = state.node.acquired.GetMeasList(); pairs = unique(list(:,1:2),'rows','stable');
+                channel = obj.app.signals.channel.Value;
+                for kind = ["raw","od"]
                     if channel>size(pairs,1), continue; end
-                    name="OD"; if kind=="raw", name="Raw data"; end
+                    name = "OD"; if kind=="raw", name = "Raw data"; end
                     try
-                        data.signals.(kind)=ssdot.io.extractTimeSeries(state.node,name,false,pairs(channel,1),pairs(channel,2),1:numel(state.node.acquired.probe.wavelengths),"");
+                        data.signals.(kind) = ssdot.io.extractTimeSeries(state.node,name,false,pairs(channel,1),pairs(channel,2),1:numel(state.node.acquired.probe.wavelengths),"");
                     catch exception
                         if ~strcmp(exception.identifier,'SSDOT:MissingSeries'), rethrow(exception); end
                     end
                 end
                 if isempty(state.sensitivity) && ~isempty(state.atlas)
-                    inputs=ssdot.io.checkWorkflowInputs(obj.datasetRoot,state.node,state.atlasFile,state.forwardFolder,obj.sharedCache);
+                    inputs = ssdot.io.checkWorkflowInputs(obj.datasetRoot,state.node,state.atlasFile,state.forwardFolder,obj.sharedCache);
                     assert(strlength(state.inputFingerprint)==0 || state.inputFingerprint==inputs.fingerprint, ...
-                        'SSDOT:ExportSnapshotChanged','Input data changed since these results were computed. Recalculate before including input views.');
+                        'SSDOT:ExportSnapshotChanged','Input data changed since these results were computed. Run Analysis before including input views.');
                     obj.loadPreparedInputs(state,inputs);
                 end
             end
-            data.sensitivity=state.sensitivity;
+            data.sensitivity = state.sensitivity;
         end
-        function saveSelectedSession(obj)
-            assert(~obj.busy && ~isempty(obj.selectedNode),'SSDOT:NoSelection','Select a recording and wait for processing to finish.');
-            [file,folder]=uiputfile('*.mat','Save reconstruction session',fullfile(obj.environment.paths.sessions,'session.mat'));
-            if ~isequal(file,0), ssdot.io.saveSession(fullfile(folder,file),obj.stateForNode(obj.selectedNode)); end
-        end
-        function loadSelectedSession(obj)
-            assert(~obj.busy && ~isempty(obj.selectedNode),'SSDOT:NoSelection','Select a recording first.');
-            [file,folder]=uigetfile('*.mat','Restore reconstruction session');
-            if isequal(file,0), return; end
-            state=obj.stateForNode(obj.selectedNode); ssdot.io.restoreSession(fullfile(folder,file),state);
-            state.runProfile="custom";
-            if isstruct(state.result) && isfield(state.result,'provenance'), state.runProfile=string(state.result.provenance.profile); end
-            state.previewDerived=state.runProfile=="preview";
-            if isstruct(state.result) && isfield(state.result,'provenance') && isfield(state.result.provenance,'preview')
-                state.previewDerived=state.result.provenance.preview;
+        function saveSession(obj,filename)
+            assert(~obj.busy,'SSDOT:Busy','Wait for the analysis to finish.');
+            assert(obj.canSaveSession(),'SSDOT:NoSelection','The shown recording has no result or ROI to save. Run Analysis first.');
+            state = obj.stateForNode(obj.selectedNode);
+            if nargin<2
+                stem = regexprep(char(state.nodeName),'[^a-zA-Z0-9._-]','_');
+                filename = obj.chooser.saveFile({'*.mat','SS-DOT session'},'Save session',fullfile(obj.environment.paths.sessions,[stem '-session.mat']));
+                if strlength(filename)==0, return; end
             end
-            obj.app.profileDropDown.Value=char(state.runProfile); obj.app.deviceDropDown.Value=char(state.config.device);
-            obj.app.atlasPath.Value=char(state.atlasFile); obj.app.forwardPath.Value=char(state.forwardFolder);
-            obj.app.refreshSettings(state.config); obj.profileNotice();
-            if ~isempty(state.result), obj.showResult(state); else, obj.app.renderActiveTab(); end
+            ssdot.io.saveSession(filename,state,obj.autoRois(state));
+            obj.app.statusLabel.Text = char("Saved session: "+string(filename)); obj.log(obj.app.statusLabel.Text);
         end
+        function openSession(obj,filename)
+            assert(~obj.busy,'SSDOT:Busy','Wait for the analysis to finish.');
+            assert(~isempty(obj.runs),'SSDOT:NoDataset','Open the dataset that contains the session''s recording first.');
+            if nargin<2
+                filename = obj.chooser.openFile({'*.mat','SS-DOT session'},'Open saved session',char(obj.environment.paths.sessions));
+                if strlength(filename)==0, return; end
+            end
+            session = ssdot.io.readSession(filename);
+            name = string(session.nodeName);
+            if strlength(name)>0
+                index = find(string({obj.runs.name})==name,1);
+                assert(~isempty(index),'SSDOT:SessionNode','This session belongs to recording %s, which is not in the open dataset.',name);
+                if index~=obj.app.recordingDropDown.Value, obj.app.recordingDropDown.Value = index; obj.selectRecording(); end
+            end
+            state = obj.stateForNode(obj.selectedNode);
+            ssdot.io.restoreSession(filename,state);
+            state.origin = "session";
+            state.runProfile = "custom";
+            if isstruct(state.result) && isfield(state.result,'provenance') && isfield(state.result.provenance,'profile')
+                state.runProfile = string(state.result.provenance.profile);
+            end
+            state.previewDerived = state.runProfile=="preview";
+            if isstruct(state.result) && isfield(state.result,'provenance') && isfield(state.result.provenance,'preview')
+                state.previewDerived = state.result.provenance.preview;
+            end
+            % The session's settings become the workspace settings so its result is current.
+            obj.config = stripRuntime(state.config); obj.profile = state.runProfile; obj.previewDerived = state.previewDerived;
+            if ~any(obj.profile==["research","preview","custom"]), obj.profile = "custom"; end
+            obj.app.profileDropDown.Value = char(obj.profile); obj.app.deviceDropDown.Value = char(string(obj.config.device));
+            obj.app.refreshSettings(obj.config);
+            if isfile(state.atlasFile) && isfile(fullfile(state.forwardFolder,'fw','Adot.mat'))
+                obj.atlasFile = string(state.atlasFile); obj.forwardFolder = string(state.forwardFolder);
+                obj.app.atlasPath.Value = char(obj.atlasFile); obj.app.forwardPath.Value = char(obj.forwardFolder);
+            else
+                obj.log('Session model paths are not available here; the current model inputs are kept.');
+            end
+            obj.log('Restored session '+string(filename)+' for '+state.nodeName+'; settings adopted as workspace settings.');
+            obj.app.statusLabel.Text = char("Restored session for "+state.nodeName+". Its settings are now the workspace settings.");
+            obj.updateProfileBanner(); obj.refreshRecordingStatuses();
+            if ~isempty(state.result), obj.showResult(state); else, obj.app.renderActiveTab(); end
+            obj.app.updateActions();
+        end
+
+        %% Averages
+        function openAverage(obj)
+            obj.destroyAverageViewer();
+            if isempty(obj.averageNodes) || obj.app.averageNode.Value<1, return; end
+            obj.app.averageViewer = ssdot.app.AverageWindow(obj,obj.averageNodes{obj.app.averageNode.Value},obj.app.averageHost);
+        end
+        function finishAverage(obj,state,sources)
+            %FINISHAVERAGE ROI for an average only when every source used the same brain mask.
+            state.origin = "average"; state.roiAnalysis = [];
+            masks = arrayfun(@(source)source.brainMask,sources,'UniformOutput',false);
+            if ~isempty(masks{1}) && all(cellfun(@(mask)isequal(mask,masks{1}),masks))
+                state.brainMask = masks{1}; obj.computeRois(state);
+            else
+                state.brainMask = [];
+                obj.log(state.nodeName+": averaged ROI not calculated because source brain masks differ or are unavailable.");
+            end
+            obj.log(sprintf('Averaged %d result(s) for %s.',numel(sources),state.nodeName));
+            obj.showResult(state); obj.app.updateActions();
+        end
+
+        %% Helpers
         function runs = leafRuns(obj,node)
-            children=ssdot.io.nodeChildren(node);
+            children = ssdot.io.nodeChildren(node);
             if isempty(children)
-                runs=[]; if isa(node,'RunClass'), runs=node; end
+                runs = []; if isa(node,'RunClass'), runs = node; end
                 return;
             end
-            runs=[];
-            for index=1:numel(children), runs=[runs obj.leafRuns(children(index))]; end %#ok<AGROW>
+            runs = [];
+            for index = 1:numel(children), runs = [runs obj.leafRuns(children(index))]; end %#ok<AGROW>
         end
         function collectAverageNodes(obj,node)
-            children=ssdot.io.nodeChildren(node); if isempty(children), return; end
-            obj.averageNodes{end+1}=node;
-            for index=1:numel(children), obj.collectAverageNodes(children(index)); end
+            children = ssdot.io.nodeChildren(node); if isempty(children), return; end
+            obj.averageNodes{end+1} = node;
+            for index = 1:numel(children), obj.collectAverageNodes(children(index)); end
         end
-        function openAverage(obj)
-            if isempty(obj.averageNodes), return; end
-            if ~isempty(obj.app.averageViewer) && isvalid(obj.app.averageViewer), delete(obj.app.averageViewer); end
-            obj.app.averageViewer=ssdot.app.AverageWindow(obj,obj.averageNodes{obj.app.averageNode.Value},obj.app.averageHost);
-        end
-        function destroyEmbeddedViews(obj)
+        function destroyRoiViewer(obj)
             if ~isempty(obj.app.roiViewer) && isvalid(obj.app.roiViewer), delete(obj.app.roiViewer); end
-            obj.app.roiViewer=[];
+            obj.app.roiViewer = [];
+        end
+        function destroyAverageViewer(obj)
             if ~isempty(obj.app.averageViewer) && isvalid(obj.app.averageViewer), delete(obj.app.averageViewer); end
-            obj.app.averageViewer=[];
+            obj.app.averageViewer = [];
         end
     end
+end
+
+function text = resultDescription(obj,state,conditionName,limits)
+    profileName = state.runProfile;
+    if isfield(state.result,'provenance') && isfield(state.result.provenance,'profile'), profileName = string(state.result.provenance.profile); end
+    parts = [state.nodeName,"condition "+conditionName,upper(string(profileName))+" profile"];
+    % Averages and restored sessions keep temporal provenance in the result, not a basis object.
+    [mode,gamma] = temporalSummary(state);
+    if strlength(mode)>0, parts(end+1) = "temporal "+mode; end
+    if strlength(gamma)>0, parts(end+1) = "gamma ["+gamma+"] s"; end
+    parts(end+1) = sprintf('color range [%.3g, %.3g] (display only)',limits(1),limits(2));
+    text = strjoin(parts," | ");
+    switch state.origin
+        case "average"
+            count = 0;
+            if isfield(state.result,'provenance') && isfield(state.result.provenance,'sourceRecordings'), count = numel(state.result.provenance.sourceRecordings); end
+            text = "AVERAGE of "+count+" recording(s) | "+text;
+        case "session"
+            text = "RESTORED SESSION (not recomputed) | "+text;
+    end
+    if ~obj.isCurrent(state), text = "OUT OF DATE: settings changed since this result. Run Analysis to update. | "+text; end
+    preview = state.previewDerived || profileName=="preview";
+    if isfield(state.result,'provenance') && isfield(state.result.provenance,'preview'), preview = preview || state.result.provenance.preview; end
+    if preview, text = "COARSE SOFTWARE PREVIEW | "+text; end
+end
+
+function [mode,gamma] = temporalSummary(state)
+    mode = ""; gamma = "";
+    source = [];
+    if isfield(state.result,'provenance'), source = state.result.provenance; end
+    if (isempty(source) || ~isfield(source,'temporalMode')) && isstruct(state.temporalBasis), source = state.temporalBasis; end
+    if isstruct(source) && isfield(source,'temporalMode'), mode = string(source.temporalMode); end
+    if isstruct(source) && isfield(source,'gammaParameters') && ~isempty(source.gammaParameters)
+        gamma = strtrim(string(sprintf('%.4g ',source.gammaParameters)));
+    end
+end
+
+function key = resultKey(result)
+    key = ssdot.io.valueHash({result.hbo,result.hbr});
+end
+
+function config = stripRuntime(config)
+    if isfield(config,'normalEquationChunk'), config = rmfield(config,'normalEquationChunk'); end
+end
+
+function equal = sameConfig(a,b)
+    a = stripRuntime(a); b = stripRuntime(b);
+    equal = isequal(sort(fieldnames(a)),sort(fieldnames(b)));
+    if ~equal, return; end
+    for name = fieldnames(a)'
+        x = a.(name{1}); y = b.(name{1});
+        if (isstring(x) || ischar(x)) && (isstring(y) || ischar(y)), x = string(x); y = string(y); end
+        if ~isequaln(x,y), equal = false; return; end
+    end
+end
+
+function rois = emptyRois()
+    rois = struct('label',{},'indices',{},'nonRoiIndices',{},'meshId',{},'coordinateSystem',{},'units',{},'source',{});
+end
+
+function info = describeRecording(node)
+    %DESCRIBERECORDING Metadata from already-loaded Homer objects; no file reads.
+    info = struct('duration','','channels',NaN,'wavelengths',"",'conditions',"");
+    try
+        list = node.acquired.GetMeasList(); info.channels = size(unique(list(:,1:2),'rows'),1);
+        info.wavelengths = strjoin(string(node.acquired.probe.wavelengths(:)'),", ");
+        time = node.acquired.data(1).GetTime(); info.duration = sprintf('%.1f',time(end)-time(1));
+        stimuli = ssdot.io.readStimuli(node); parts = strings(1,numel(stimuli));
+        for index = 1:numel(stimuli), parts(index) = stimuli(index).name+" ("+size(stimuli(index).events,1)+")"; end
+        info.conditions = strjoin(parts,", ");
+    catch exception
+        info.conditions = "Metadata unavailable: "+string(exception.message);
+    end
+end
+
+function chooser = defaultChooser()
+    chooser = struct('folder',@chooseFolder,'openFile',@chooseFile,'saveFile',@chooseSaveFile);
+end
+
+function folder = chooseFolder(initial,titleText)
+    folder = uigetdir(char(initial),char(titleText));
+    if isequal(folder,0), folder = ""; else, folder = string(folder); end
+end
+
+function filename = chooseFile(filter,titleText,initial)
+    [file,folder] = uigetfile(filter,char(titleText),char(initial));
+    if isequal(file,0), filename = ""; else, filename = string(fullfile(folder,file)); end
+end
+
+function filename = chooseSaveFile(filter,titleText,initial)
+    [file,folder] = uiputfile(filter,char(titleText),char(initial));
+    if isequal(file,0), filename = ""; else, filename = string(fullfile(folder,file)); end
 end

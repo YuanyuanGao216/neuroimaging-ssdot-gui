@@ -77,7 +77,7 @@ end
 function testGuiSingleRoiNeedsNoReconstructionOrComparison(t)
     root = fileparts(fileparts(mfilename('fullpath'))); addpath(root);
     app = main(); t.addTeardown(@()delete(app)); app.figure.Visible = 'off';
-    group = app.loadDataset(fullfile(root,'ST001'),false);
+    group = app.openDataset(fullfile(root,'ST001'));
     state = app.controller.stateForNode(group.subjs(1).sess(1).runs(1));
     app.controller.loadAtlas(state,fullfile(root,'ST001','atlasViewer.mat'));
     viewer = app.controller.openRoiViewer(state); viewer.figure.Visible = 'off';
@@ -98,7 +98,8 @@ function testGuiSingleRoiNeedsNoReconstructionOrComparison(t)
     verifySize(t,viewer.surface.vertices,[34207 3]); verifyEmpty(t,viewer.compatibleIndices);
     verifyEqual(t,viewer.firstSelection.Value,0);
     verifyTrue(t,contains(string(viewer.status.Text),'No ROI is defined'));
-    verifyEqual(t,string(viewer.calculateButton.Enable),"off");
+    verifyEqual(t,string(viewer.updateButton.Visible),"off");
+    verifyEqual(t,app.controller.cacheStatistics.solves,0);
     % A session preserves both explicit mesh associations, never remaps the indices.
     pial = ssdot.io.roiFromIndices(viewer.surface,34207,[],'full-pial fixture'); viewer.addRoi(pial);
     fixture = t.applyFixture(matlab.unittest.fixtures.TemporaryFolderFixture);

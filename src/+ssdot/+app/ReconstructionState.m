@@ -28,6 +28,13 @@ classdef ReconstructionState < handle
         spatialKey = ""
         lastAccess = 0
         reconstructionCount = 0
+        % "analysis", "session" or "average": how the current result was obtained.
+        origin = "analysis"
+        % Brain-mask vertex indices of the result's sensitivity; needed to recompute ROIs.
+        brainMask = []
+        % Automatic ROI selection derived from result; revalidated against the values.
+        roiAnalysis = []
+        % Imported or user-managed ROI selections.
         rois = struct("label", {}, "indices", {}, "nonRoiIndices", {}, ...
             "meshId", {}, "coordinateSystem", {}, "units", {}, "source", {})
     end

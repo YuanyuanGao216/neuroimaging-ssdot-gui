@@ -25,13 +25,22 @@ function restoreSession(filename, state)
         assert(~isempty(atlas),'SSDOT:MissingAtlas','A matching atlas is required to restore ROI selections.');
         rois = ssdot.io.validateDatasetRois(session.rois,atlas);
     end
+    analysis = [];
+    if isfield(session,'automaticRois') && ~isempty(session.automaticRois) && ~isempty(session.result)
+        analysis = session.automaticRois;
+        analysis.rois = ssdot.io.validateDatasetRois(analysis.rois,atlas);
+        % Derived ROIs are only meaningful for the exact restored values.
+        if analysis.resultKey ~= ssdot.io.valueHash({session.result.hbo,session.result.hbr}), analysis = []; end
+    end
     % Commit to in-memory state only after node, recording, mesh and ROI checks.
     state.applyConfig(session.config);
     state.atlas = atlas;
     state.atlasFile = session.atlasFile; state.forwardFolder = session.forwardFolder;
     state.spatialCenters = []; state.recordingSnapshot = []; state.inputFingerprint = "";
     state.sensitivity = []; state.spatialBasis = []; state.temporalBasis = []; state.observations = [];
-    state.result = session.result; state.rois = rois;
+    state.result = session.result; state.rois = rois; state.roiAnalysis = analysis;
+    state.brainMask = [];
+    if isfield(session,'brainMask'), state.brainMask = session.brainMask; end
     state.cacheKey=""; state.algorithmIdentity=""; state.status="Waiting";
     if isstruct(state.result) && isfield(state.result,'provenance')
         provenance=state.result.provenance;

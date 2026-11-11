@@ -30,11 +30,11 @@ function testGuiNormalizedMapsRoiCacheAndFigureExport(t)
     root=ssdot.app.projectRoot();app=main();t.addTeardown(@()delete(app));app.figure.Visible='off';
     fixture=t.applyFixture(matlab.unittest.fixtures.TemporaryFolderFixture);
     app.controller.environment.paths=ssdot.app.runtimePaths(fixture.Folder);
-    group=app.loadDataset(fullfile(root,'ST001'),false);node=group.subjs(1).sess(1).runs(1);
+    group=app.openDataset(fullfile(root,'ST001'));node=group.subjs(1).sess(1).runs(1);
     app.controller.selectedNode=node;state=app.controller.stateForNode(node);
     state.config=ssdot.app.profileConfig('preview','cpu');state.config.spatialRegularization=true;
     app.controller.preflight(state);app.controller.loadPreparedInputs(state);app.controller.prepareTemporal(state);
-    app.controller.generateSpatial(state);app.controller.prepareObservations(state);app.controller.runReconstruction(state,false);
+    app.controller.generateSpatial(state);app.controller.prepareObservations(state);app.controller.runReconstruction(state);
     model=struct('forwardMatrix',state.sensitivity.A,'spatialBasis',state.spatialBasis,'temporalBasis',state.temporalBasis, ...
         'masks',state.sensitivity.M,'vertexCount',size(state.atlas.fwmodel.mesh.vertices,1));
     cfg=state.config;cfg.spatialRegularization=false;
@@ -47,11 +47,13 @@ function testGuiNormalizedMapsRoiCacheAndFigureExport(t)
     app.controller.showResult(state);drawnow;
     patches=findall(app.resultAxes(1),'Type','patch');verifyNotEmpty(t,patches);
     verifyEqual(t,patches(1).FaceVertexCData,expectedO(:,1),'AbsTol',1e-18);
-    viewer=app.controller.openRoiViewer(state);viewer.calculateRoi();
-    cfgRoi=struct('original_ROI',0);
+    % The integrated ROI stage uses the corrected (normalized) maps.
+    app.controller.computeRois(state);rois=app.controller.autoRois(state);roi=app.controller.roiSettings;
+    surface=ssdot.io.surfaceFromAtlas(state.atlas);cfgRoi=struct('original_ROI',0);
     [selected,background]=ssdot.recon.findRoi(expectedO(:,1),expectedR(:,1),state.sensitivity.M, ...
-        viewer.surface.vertices,viewer.upperThreshold.Value,viewer.lowerThreshold.Value,viewer.exclusionDistance.Value,cfgRoi);
-    verifyEqual(t,state.rois(1).indices,selected);verifyEqual(t,state.rois(1).nonRoiIndices,background);
+        surface.vertices,roi.upperThreshold,roi.lowerThreshold,roi.exclusionDistance,cfgRoi);
+    verifyEqual(t,rois(1).indices,selected);verifyEqual(t,rois(1).nonRoiIndices,background);
+    viewer=app.controller.openRoiViewer(state);verifyEqual(t,viewer.items(1),rois(1));
     originalKey=state.cacheKey;app.controller.saveResultCache(state);verifyTrue(t,isfile(app.controller.resultCacheFile(state)));
     saved=state.result;state.result=[];verifyTrue(t,app.controller.restoreResult(state));
     verifyEqual(t,state.result.hbo,saved.hbo);verifyEqual(t,state.cacheKey,originalKey);
@@ -67,7 +69,7 @@ function testGuiNormalizedMapsRoiCacheAndFigureExport(t)
     options=struct('formats',"fig",'dpi',72,'maps',true,'temporal',false,'kernels',false,'rois',false, ...
         'inputViews',false,'autoColor',true,'showNonRoi',true);
     data=struct('label',"normalization fixture",'atlas',state.atlas,'result',state.result,'temporal',[], ...
-        'centers',[],'rois',state.rois,'comparison',[],'sensitivity',[],'preview',false,'signals',struct());
+        'centers',[],'rois',app.controller.allRois(state),'comparison',[],'sensitivity',[],'preview',false,'signals',struct());
     destination=fullfile(fixture.Folder,'figures');mkdir(destination);ssdot.viz.exportFigures(data,destination,options);
     fig=openfig(fullfile(destination,'hbo_condition-001.fig'),'invisible');t.addTeardown(@()delete(fig));
     patches=findall(fig,'Type','patch');verifyNotEmpty(t,patches);
@@ -80,17 +82,18 @@ function testGuiNormalizedMapsRoiCacheAndFigureExport(t)
     config=state.config;config.spatialRegularization=false;state.applyConfig(config);
     app.controller.preflight(state);app.controller.loadPreparedInputs(state);
     if isempty(state.temporalBasis),app.controller.prepareTemporal(state);end
-    app.controller.generateSpatial(state);app.controller.prepareObservations(state);app.controller.runReconstruction(state,false);
+    app.controller.generateSpatial(state);app.controller.prepareObservations(state);app.controller.runReconstruction(state);
     unnormalized=state.result;verifyEqual(t,string(unnormalized.provenance.spatialOutputScaling),"none");
     verifyNotEqual(t,state.cacheKey,originalKey);app.controller.showResult(state);drawnow;
     patches=findall(app.resultAxes(1),'Type','patch');verifyEqual(t,patches(1).FaceVertexCData,unnormalized.hbo(:,1),'AbsTol',1e-18);
-    viewer=app.controller.openRoiViewer(state);viewer.calculateRoi();
+    verifyEqual(t,app.controller.roiStatus(state),"missing",'ROIs from the normalized result must not survive a new result.');
+    app.controller.computeRois(state);rois=app.controller.autoRois(state);
     [selected,background]=ssdot.recon.findRoi(unnormalized.hbo(:,1),unnormalized.hbr(:,1),state.sensitivity.M, ...
-        viewer.surface.vertices,viewer.upperThreshold.Value,viewer.lowerThreshold.Value,viewer.exclusionDistance.Value,cfgRoi);
-    verifyEqual(t,state.rois(end).indices,selected);verifyEqual(t,state.rois(end).nonRoiIndices,background);
+        surface.vertices,roi.upperThreshold,roi.lowerThreshold,roi.exclusionDistance,cfgRoi);
+    verifyEqual(t,rois(1).indices,selected);verifyEqual(t,rois(1).nonRoiIndices,background);
     app.controller.saveResultCache(state);state.result=[];verifyTrue(t,app.controller.restoreResult(state));
     verifyEqual(t,state.result.hbo,unnormalized.hbo);
-    data.result=state.result;data.rois=state.rois;destination=fullfile(fixture.Folder,'unnormalized');mkdir(destination);
+    data.result=state.result;data.rois=app.controller.allRois(state);destination=fullfile(fixture.Folder,'unnormalized');mkdir(destination);
     ssdot.viz.exportFigures(data,destination,options);fig2=openfig(fullfile(destination,'hbo_condition-001.fig'),'invisible');
     t.addTeardown(@()delete(fig2));patches=findall(fig2,'Type','patch');
     verifyEqual(t,patches(1).FaceVertexCData,unnormalized.hbo(:,1),'AbsTol',1e-18);

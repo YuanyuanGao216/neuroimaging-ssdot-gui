@@ -1,5 +1,5 @@
 classdef AverageWindow < handle
-    %AVERAGEWINDOW Select computed child results for an arithmetic mean.
+    %AVERAGEWINDOW Select completed child results for an arithmetic mean.
     properties
         figure
         container
@@ -7,6 +7,7 @@ classdef AverageWindow < handle
         controller
         node
         table
+        button
     end
     methods
         function obj = AverageWindow(controller,node,parent)
@@ -16,28 +17,38 @@ classdef AverageWindow < handle
             else
                 obj.figure=ancestor(parent,'figure'); obj.container=uigridlayout(parent,[1 1]); obj.container.Padding=[0 0 0 0];
             end
-            grid = uigridlayout(obj.container,[2 1]); grid.RowHeight = {'1x',40};
-            children = ssdot.io.nodeChildren(node);
+            grid = uigridlayout(obj.container,[2 1]); grid.RowHeight = {'1x',36};
+            obj.table = uitable(grid,'ColumnName',{'Include','Recording','Result'},'ColumnEditable',[true false false],'RowName',{});
+            obj.button = uibutton(grid,'Text','Calculate average','ButtonPushedFcn',@(~,~)controller.perform(@()obj.computeAverage()));
+            obj.refresh();
+        end
+        function refresh(obj)
+            %REFRESH Show which children currently have a result; keep the user's selection.
+            children = ssdot.io.nodeChildren(obj.node);
+            previous = obj.table.Data;
             data = cell(numel(children),3);
             for index = 1:numel(children)
-                state = controller.stateForNode(children(index));
-                data(index,:) = {false,char(children(index).name),~isempty(state.result)};
+                state = obj.controller.stateForNode(children(index));
+                include = false;
+                if size(previous,1)==numel(children), include = previous{index,1}; end
+                status = obj.controller.displayStatus(state);
+                data(index,:) = {include && ~isempty(state.result),char(children(index).name),char(status)};
             end
-            obj.table = uitable(grid,'Data',data,'ColumnName',{'Select','Name','Computed'},'ColumnEditable',[true false false]);
-            uibutton(grid,'Text','Calculate average','ButtonPushedFcn',@(~,~)controller.perform(@()obj.computeAverage()));
+            obj.table.Data = data;
         end
         function computeAverage(obj)
             children = ssdot.io.nodeChildren(obj.node);
             selected = find(cell2mat(obj.table.Data(:,1)));
-            assert(~isempty(selected),'SSDOT:NoSelection','Select at least one computed result.');
+            assert(~isempty(selected),'SSDOT:NoSelection','Select at least one recording with a result.');
             results = struct('hbo',{},'hbr',{});
             reference = [];
             sources = strings(1,numel(selected));
             fingerprints = sources; devices = sources;
+            sourceStates = ssdot.app.ReconstructionState.empty;
             sourceIndex = 0;
             for index = selected(:)'
                 state = obj.controller.stateForNode(children(index));
-                assert(~isempty(state.result),'SSDOT:MissingResult','A selected child has no reconstruction.');
+                assert(~isempty(state.result),'SSDOT:MissingResult','%s has no result. Run Analysis first.',state.nodeName);
                 mesh = ssdot.io.surfaceFromAtlas(state.atlas);
                 if isempty(reference), reference = state; referenceMesh = mesh; end
                 assert(mesh.meshId == referenceMesh.meshId,'SSDOT:MeshMismatch','Selected results use different meshes.');
@@ -56,10 +67,11 @@ classdef AverageWindow < handle
                 sourceIndex=sourceIndex+1; sources(sourceIndex)=state.nodeName;
                 fingerprints(sourceIndex)=state.inputFingerprint; devices(sourceIndex)=string(state.config.device);
                 results(end+1) = struct('hbo',state.result.hbo,'hbr',state.result.hbr); %#ok<AGROW>
+                sourceStates(end+1) = state; %#ok<AGROW>
             end
             result = ssdot.recon.averageResults(results);
             state = obj.controller.stateForNode(obj.node);
-            state.atlas = reference.atlas; state.atlasFile = reference.atlasFile;
+            state.atlas = reference.atlas; state.atlasFile = reference.atlasFile; state.forwardFolder = reference.forwardFolder;
             state.applyConfig(reference.config); state.runProfile=reference.runProfile;
             state.previewDerived=reference.previewDerived;
             if isfield(reference.result,'provenance')
@@ -73,7 +85,7 @@ classdef AverageWindow < handle
                 result.provenance.recording=state.nodeName;
             end
             state.result = result;
-            obj.controller.showResult(state);
+            obj.controller.finishAverage(state,sourceStates);
         end
         function delete(obj)
             if obj.ownsFigure

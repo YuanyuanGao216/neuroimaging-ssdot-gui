@@ -21,19 +21,23 @@ Open the repository folder in MATLAB and run:
 app = main();              % equivalent to main("gui")
 ```
 
-1. Click **Load dataset** and select the included `ST001` folder or another compatible dataset.
-2. The initially selected recording is reconstructed automatically.
-3. Select a recording, condition and chromophore to explore the results.
+1. Click **Open dataset...** and select the included `ST001` folder or another compatible dataset. Opening reads the stored Homer results and shows an **Overview** of recordings, durations, channels, wavelengths, conditions and model files. Nothing is computed.
+2. Optionally review **Settings** and choose the profile, compute device and whether to run all recordings or only the shown one.
+3. Press **Run Analysis**. For each recording it checks the inputs, prepares sensitivity, temporal and spatial bases, reconstructs HbO/HbR and calculates the ROI for every condition. Progress and the current step are shown in the Analysis panel; **Cancel** stops at the next safe boundary and keeps completed recordings.
+4. Explore **Results** (HbO/HbR maps), **ROI**, **Signals**, **Model** and **Average**. Selecting a recording or condition only changes the display.
 
-The workspace includes raw signals, optical density, sensitivity, temporal bases, HbO/HbR maps, ROI views, diagnostics and logs. **Advanced** contains numerical settings, model-path overrides and individual pipeline stages.
-
-| Processing mode | Behavior |
+| Tab | Contents |
 | --- | --- |
-| Automatic | Processes the selected recording, then compatible remaining recordings when estimated cost is reasonable; asks before expensive batches. |
-| Process All | Processes all compatible recordings sequentially. |
-| Selected Only | Processes recordings when selected. |
+| Overview | Dataset summary, model-input readiness and the status of each recording |
+| Signals | Stored raw intensity and optical density, with stored averages when available |
+| Results | HbO/HbR maps by condition, with provenance and color scale |
+| ROI | Automatic ROIs from Run Analysis, imported ROIs, comparisons and coordinate distances |
+| Model | Registered probe, sensitivity, kernel centers and temporal basis |
+| Average | Arithmetic mean of completed recordings with matching settings |
+| Settings | Reconstruction parameters, model-input locations, ROI thresholds and figure export options |
+| Log | Stage timings, activity log, technical error details and GPU check |
 
-Completed results are cached. Progress, cancellation, retry and per-recording errors remain available during processing. GPU fallback requires an explicit CPU selection.
+Settings apply to the whole workspace. Changing them never discards results: existing results are marked **Out of date** until the next Run Analysis, which reuses every result whose inputs and settings are unchanged. ROI thresholds can be changed after a run; **Update ROIs** recalculates them from existing results without repeating the reconstruction. An empty ROI (no vertex above the threshold) is a valid outcome and is reported as such.
 
 ## Dataset requirements
 
@@ -55,7 +59,7 @@ dataset/
 
 Reconstruction requires continuous optical density, channel-activity metadata, task events, two wavelengths, and usable short-separation channels. Recording channels, wavelengths, probe coordinates, units and mesh ordering must match the forward model. Model discovery validates compatibility; it does not perform registration or substitute models from another dataset.
 
-Use `SSDOT_DATA_ROOT` to change the default dataset browser location. Atlas and forward-model locations can also be selected in **Advanced**.
+Use `SSDOT_DATA_ROOT` to change the default dataset browser location. Atlas and forward-model locations can also be selected in **Settings > Model inputs**; Run Analysis stays disabled, with the missing files listed, until they exist.
 
 ## Reconstruction
 
@@ -67,9 +71,9 @@ The default `professorOriginal` temporal mode uses onset impulses and configured
 
 ## ROI and exports
 
-The ROI viewer supports single selections and compatible side-by-side or overlay comparisons. ROIs belong to a specific mesh; forward-model and full-pial indices are not interchangeable. Coordinate distances use the selected mesh's frame and units.
+Run Analysis calculates one automatic ROI per condition with the existing `findRoi` rule on HbO: vertices above a fraction of the peak over the whole forward mesh that also lie in the brain sensitivity mask, plus a separate non-ROI set below a second fraction and outside an exclusion distance. The ROI viewer also supports imported ROIs and compatible side-by-side or overlay comparisons. ROIs belong to a specific mesh; forward-model and full-pial indices are not interchangeable. Coordinate distances use the selected mesh's frame and units.
 
-**Export figures** saves available maps, temporal bases, kernel centers and ROI views. PNG is the default; PDF and editable MATLAB FIG formats are available under **Advanced**. Raw/OD and probe/sensitivity views are optional. Exports use a new destination subfolder and preserve the underlying numerical values. **Save session** stores a MAT session for later restoration.
+**Export figures...** saves available maps, temporal bases, kernel centers and ROI views. PNG is the default; PDF and editable MATLAB FIG formats are available under **Settings > Figure export**. Raw/OD and probe/sensitivity views are optional. Exports use a new destination subfolder, never overwrite files and preserve the underlying numerical values. **Save session...** stores the shown recording's result, settings and ROIs; **Open session...** restores it for the matching recording and adopts its settings.
 
 Generated caches, logs, reports and sessions are stored under ignored `results/`. Owned caches, temporary files and inactive logs have cleanup policies; deliberate exports, saved sessions and scientific reports are retained. Original dataset files are not modified.
 
@@ -88,7 +92,7 @@ flowchart LR
 
 | Location | Purpose |
 | --- | --- |
-| `src/+ssdot/+app` | GUI lifecycle, state and processing coordination |
+| `src/+ssdot/+app` | Workspace window, explicit analysis workflow and per-recording state |
 | `src/+ssdot/+io` | Dataset/model adapters, ROI and session persistence |
 | `src/+ssdot/+recon` | Numerical functions with explicit inputs and outputs |
 | `src/+ssdot/+viz` | Shared plotting and figure export |
@@ -109,7 +113,7 @@ main("validation")         % runs the validation/reporting workflow
 
 Historical simulation requires separately supplied compatible reference recordings, resting data, forward models and stimulus sequences. Set `SSDOT_SIMULATION_INPUT_ROOT` or pass explicit paths to `ssdot.simulation.runStudy(options)`. The included experimental dataset is not a replacement for these inputs.
 
-The **Validation** tab provides the reporting workflow without running scripts manually. Reports use HTML with MAT/CSV/JSON numerical outputs. External recordings require compatible models and their own usage permissions; keep downloaded datasets outside Git. Numerical agreement is distinct from physiological or anatomical validation.
+`main("validation")` runs the research reporting workflow (ST001 diagnostics, known-source simulations and optional public benchmarks); it is intentionally not part of the analysis workspace. Reports use HTML with MAT/CSV/JSON numerical outputs. External recordings require compatible models and their own usage permissions; keep downloaded datasets outside Git. Numerical agreement is distinct from physiological or anatomical validation.
 
 ## Development
 
@@ -121,7 +125,7 @@ assertSuccess(results);
 assert(all([results.Passed]));
 ```
 
-Some tests require external recordings listed in [publicDataManifest.json](tests/fixtures/publicDataManifest.json). Set `SSDOT_PUBLIC_DATA_ROOT` to their local directory. GPU tests require the corresponding toolbox and hardware.
+Some tests require external recordings listed in [publicDataManifest.json](tests/fixtures/publicDataManifest.json). Set `SSDOT_PUBLIC_DATA_ROOT` to their local directory. GPU tests require the corresponding toolbox and hardware. The full-resolution workflow test is reported as not executed when the memory preflight finds too little free RAM. GUI tests replace `app.controller.chooser` instead of driving native file dialogs.
 
 ## Reference and license
 

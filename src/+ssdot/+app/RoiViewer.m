@@ -1,5 +1,6 @@
 classdef RoiViewer < handle
-    %ROIVIEWER Single ROI viewing, optional compatible comparison and distances.
+    %ROIVIEWER Automatic and imported ROIs, optional comparison, mesh files and distances.
+    % Automatic ROIs come from Run Analysis; this view never reconstructs.
     properties
         figure
         container
@@ -7,6 +8,8 @@ classdef RoiViewer < handle
         controller
         state
         surface
+        items
+        automaticCount = 0
         meshSelection
         firstSelection
         secondSelection
@@ -15,16 +18,12 @@ classdef RoiViewer < handle
         firstAxes
         secondAxes
         status
+        updateButton
         coordinateInputs
         vertexInputs
         endpointMode
         distanceLabel
-        selectionCondition
-        upperThreshold
-        lowerThreshold
-        exclusionDistance
         selectionLabel
-        calculateButton
         saveButton
         renameButton
         compatibleIndices = []
@@ -39,53 +38,46 @@ classdef RoiViewer < handle
                 obj.container = obj.figure; obj.ownsFigure = true;
             else
                 obj.figure = ancestor(parent,'figure');
-                obj.container = uigridlayout(parent,[1 1]); obj.container.Padding=[0 0 0 0];
+                obj.container = uigridlayout(parent,[1 1]); obj.container.Padding = [0 0 0 0];
             end
-            grid = uigridlayout(obj.container,[1 2]); grid.ColumnWidth = {310,'1x'};
+            grid = uigridlayout(obj.container,[1 2]); grid.ColumnWidth = {320,'1x'};
             tabs = uitabgroup(grid);
-            roiTab = uitab(tabs,'Title','ROI'); selectionTab = uitab(tabs,'Title','Advanced'); distanceTab = uitab(tabs,'Title','Distance');
-            controls = uigridlayout(roiTab,[5 1]);
-            controls.RowHeight = {22,30,36,130,'1x'};
-            controls.RowSpacing = 6;
+            roiTab = uitab(tabs,'Title','ROI'); filesTab = uitab(tabs,'Title','Files'); distanceTab = uitab(tabs,'Title','Distance');
+            controls = uigridlayout(roiTab,[9 1]);
+            controls.RowHeight = {18,28,'fit',32,18,28,28,24,'1x'}; controls.RowSpacing = 6;
             uilabel(controls,'Text','ROI to display');
-            obj.firstSelection = uidropdown(controls,'Items',{'No ROI loaded'},'ItemsData',0, ...
-                'ValueChangedFcn',@(~,~)obj.refresh());
-            obj.calculateButton = uibutton(controls,'Text','Calculate ROI', ...
-                'Tooltip','Use the condition and thresholds in ROI Advanced to define a new selection.', ...
-                'ButtonPushedFcn',@(~,~)obj.controller.perform(@()obj.calculateRoi()));
-            obj.status = uilabel(controls,'Text','No ROI supplied. No selections are generated automatically.','WordWrap','on');
-            selectionGrid = uigridlayout(selectionTab,[14 2]); selectionGrid.ColumnWidth = {145,'1x'};
-            selectionGrid.RowHeight={22,32,30,30,30,30,30,30,30,30,30,30,60,'1x'};
-            selectionGrid.RowSpacing=6; selectionGrid.Scrollable='on';
-            meshLabel=uilabel(selectionGrid,'Text','Mesh used for ROI indices'); meshLabel.Layout.Column=[1 2];
-            obj.meshSelection = uidropdown(selectionGrid,'Items',{'Forward model (reconstruction)','Full pial (anatomy)'},'ItemsData',{'forward','pial'}, ...
+            obj.firstSelection = uidropdown(controls,'Items',{'No ROI'},'ItemsData',0,'ValueChangedFcn',@(~,~)obj.refresh());
+            obj.status = uilabel(controls,'Text','','WordWrap','on','VerticalAlignment','top');
+            obj.updateButton = uibutton(controls,'Text','Update ROIs with current settings', ...
+                'Tooltip','Recalculate automatic ROIs from existing results with the thresholds in Settings > ROI. No reconstruction.', ...
+                'ButtonPushedFcn',@(~,~)obj.controller.perform(@()obj.controller.updateRois()));
+            uilabel(controls,'Text','Compare with');
+            obj.secondSelection = uidropdown(controls,'Items',{'No second ROI'},'ItemsData',0,'ValueChangedFcn',@(~,~)obj.refresh());
+            obj.mode = uidropdown(controls,'Items',{'Single','Side by side','Overlay'}, ...
+                'ItemsData',{'single','sideBySide','overlay'},'ValueChangedFcn',@(~,~)obj.refresh());
+            obj.showNonRoi = uicheckbox(controls,'Text','Show non-ROI selection','Value',true,'ValueChangedFcn',@(~,~)obj.refresh());
+            uilabel(controls,'WordWrap','on','VerticalAlignment','top','FontColor',[0.35 0.35 0.35],'Text', ...
+                ['Automatic ROIs use the existing findRoi rule on HbO: vertices above a fraction of the peak over the whole ' ...
+                'forward mesh that also lie in the brain sensitivity mask. If the peak lies outside the mask the ROI can be ' ...
+                'empty. Thresholds are in Settings > ROI.']);
+            files = uigridlayout(filesTab,[8 2]); files.ColumnWidth = {110,'1x'};
+            files.RowHeight = {18,28,32,28,32,'fit','1x',0}; files.RowSpacing = 6;
+            meshLabel = uilabel(files,'Text','Mesh used for ROI indices'); meshLabel.Layout.Column = [1 2];
+            obj.meshSelection = uidropdown(files,'Items',{'Forward model (reconstruction)','Full pial (anatomy)'},'ItemsData',{'forward','pial'}, ...
                 'Tooltip','Each mesh has its own vertex indices. ROI indices are never transferred automatically.', ...
                 'ValueChangedFcn',@(~,~)obj.controller.perform(@()obj.changeMesh()));
-            obj.meshSelection.Layout.Column=[1 2];
-            uibutton(selectionGrid,'Text','Import ROI file','ButtonPushedFcn',@(~,~)obj.controller.perform(@()obj.importRoi()));
-            obj.saveButton=uibutton(selectionGrid,'Text','Export ROI file','ButtonPushedFcn',@(~,~)obj.controller.perform(@()obj.saveRoi()));
-            uilabel(selectionGrid,'Text','ROI name'); obj.selectionLabel=uieditfield(selectionGrid,'text','Value','Thresholded HbO');
-            obj.renameButton=uibutton(selectionGrid,'Text','Rename ROI','ButtonPushedFcn',@(~,~)obj.controller.perform(@()obj.renameRoi()));
-            obj.renameButton.Layout.Column=[1 2];
-            uilabel(selectionGrid,'Text','Condition');
-            count = 1; if ~isempty(state.result), count=size(state.result.hbo,2); end
-            obj.selectionCondition=uidropdown(selectionGrid,'Items',cellstr(compose('Condition %d',1:count)),'ItemsData',1:count);
-            uilabel(selectionGrid,'Text','Upper relative threshold'); obj.upperThreshold=uieditfield(selectionGrid,'numeric','HorizontalAlignment','left','Value',0.90);
-            uilabel(selectionGrid,'Text','Lower relative threshold'); obj.lowerThreshold=uieditfield(selectionGrid,'numeric','HorizontalAlignment','left','Value',0.01);
-            uilabel(selectionGrid,'Text','Non-ROI exclusion distance'); obj.exclusionDistance=uieditfield(selectionGrid,'numeric','HorizontalAlignment','left','Value',40);
-            uilabel(selectionGrid,'Text','Second ROI');
-            obj.secondSelection = uidropdown(selectionGrid,'Items',{'No second ROI'},'ItemsData',0, ...
-                'ValueChangedFcn',@(~,~)obj.refresh());
-            uilabel(selectionGrid,'Text','Comparison');
-            obj.mode = uidropdown(selectionGrid,'Items',{'Single','Side by side','Overlay'}, ...
-                'ItemsData',{'single','sideBySide','overlay'},'ValueChangedFcn',@(~,~)obj.refresh());
-            obj.showNonRoi = uicheckbox(selectionGrid,'Text','Show supplied non-ROI selections','Value',true, ...
-                'ValueChangedFcn',@(~,~)obj.refresh()); obj.showNonRoi.Layout.Column=[1 2];
-            info=uilabel(selectionGrid,'Text','ROI thresholds are a separate analysis choice. Uses the existing findRoi algorithm.','WordWrap','on');
-            info.Layout.Column=[1 2];
-            distanceControls = uigridlayout(distanceTab,[8 1]);
-            distanceControls.RowHeight = {45,30,110,35,35,70,'1x','1x'};
-            uilabel(distanceControls,'Text','Endpoints A/B in native [x y z] coordinates');
+            obj.meshSelection.Layout.Column = [1 2];
+            uibutton(files,'Text','Import ROI...','ButtonPushedFcn',@(~,~)obj.controller.perform(@()obj.importRoi()));
+            obj.saveButton = uibutton(files,'Text','Export ROI...','ButtonPushedFcn',@(~,~)obj.controller.perform(@()obj.saveRoi()));
+            uilabel(files,'Text','ROI name'); obj.selectionLabel = uieditfield(files,'text','Value','');
+            obj.renameButton = uibutton(files,'Text','Rename imported ROI','ButtonPushedFcn',@(~,~)obj.controller.perform(@()obj.renameRoi()));
+            obj.renameButton.Layout.Column = [1 2];
+            note = uilabel(files,'WordWrap','on','FontColor',[0.35 0.35 0.35],'Text', ...
+                'Exported ROI files record their mesh identity. Imported ROIs are kept with this recording and saved in sessions.');
+            note.Layout.Column = [1 2];
+            distanceControls = uigridlayout(distanceTab,[7 1]);
+            distanceControls.RowHeight = {36,28,100,30,32,'fit','1x'};
+            uilabel(distanceControls,'Text','Endpoints A/B as vertex indices or native [x y z] coordinates','WordWrap','on');
             obj.endpointMode = uidropdown(distanceControls,'Items',{'Vertex indices','Native coordinates'}, ...
                 'ValueChangedFcn',@(~,~)obj.updateEndpoints());
             points = uigridlayout(distanceControls,[3 4]); points.Padding = [0 0 0 0];
@@ -116,9 +108,10 @@ classdef RoiViewer < handle
         end
         function renameRoi(obj)
             index = obj.firstSelection.Value;
-            assert(index>0,'SSDOT:NoRoi','Select an ROI first.');
-            candidate = obj.state.rois(index); candidate.label = string(obj.selectionLabel.Value);
-            obj.state.rois(index) = ssdot.viz.validateRoi(candidate,obj.surface);
+            assert(index>obj.automaticCount,'SSDOT:NoRoi','Select an imported ROI. Automatic ROIs are named by their condition.');
+            stored = index-obj.automaticCount;
+            candidate = obj.state.rois(stored); candidate.label = string(obj.selectionLabel.Value);
+            obj.state.rois(stored) = ssdot.viz.validateRoi(candidate,obj.surface);
             obj.updateSelections(); obj.firstSelection.Value = index; obj.refresh();
         end
         function changeMesh(obj)
@@ -130,13 +123,18 @@ classdef RoiViewer < handle
             roi = ssdot.viz.validateRoi(roi,obj.surface);
             obj.state.rois(end+1) = roi;
             obj.updateSelections();
-            obj.firstSelection.Value = numel(obj.state.rois);
+            obj.firstSelection.Value = obj.automaticCount+numel(obj.state.rois);
             obj.refresh();
         end
         function updateSelections(obj)
+            %UPDATESELECTIONS Automatic ROIs first, then imported ROIs on the selected mesh.
+            automatic = obj.controller.autoRois(obj.state);
+            obj.automaticCount = numel(automatic);
+            obj.items = obj.controller.allRois(obj.state);
+            previousFirst = obj.firstSelection.Value; previousSecond = obj.secondSelection.Value;
             indices = [];
-            for index = 1:numel(obj.state.rois)
-                roi = obj.state.rois(index);
+            for index = 1:numel(obj.items)
+                roi = obj.items(index);
                 if string(roi.meshId)==obj.surface.meshId && ...
                         string(roi.coordinateSystem)==obj.surface.coordinateSystem && string(roi.units)==obj.surface.units
                     ssdot.viz.validateRoi(roi,obj.surface);
@@ -144,38 +142,49 @@ classdef RoiViewer < handle
                 end
             end
             obj.compatibleIndices = indices;
-            if isempty(indices)
-                obj.firstSelection.Items = {'No ROI loaded'}; obj.firstSelection.ItemsData = 0;
-                obj.firstSelection.Value = 0;
-            else
-                obj.firstSelection.Items = cellstr(string({obj.state.rois(indices).label}));
-                obj.firstSelection.ItemsData = indices; obj.firstSelection.Value = indices(1);
+            labels = cell(1,numel(indices));
+            for position = 1:numel(indices)
+                labels{position} = char(string(obj.items(indices(position)).label)+obj.countText(indices(position)));
             end
-            obj.secondSelection.Items = [{'No second ROI'},cellstr(string({obj.state.rois(indices).label}))];
-            obj.secondSelection.ItemsData = [0 indices]; obj.secondSelection.Value = 0;
-            obj.mode.Value = 'single';
-            obj.secondSelection.Enable = matlab.lang.OnOffSwitchState(numel(indices)>1);
+            if isempty(indices)
+                obj.firstSelection.Items = {'No ROI on this mesh'}; obj.firstSelection.ItemsData = 0; obj.firstSelection.Value = 0;
+            else
+                obj.firstSelection.Items = labels; obj.firstSelection.ItemsData = indices;
+                if ismember(previousFirst,indices), obj.firstSelection.Value = previousFirst; else, obj.firstSelection.Value = indices(1); end
+            end
+            obj.secondSelection.Items = [{'No second ROI'},labels];
+            obj.secondSelection.ItemsData = [0 indices];
+            if ismember(previousSecond,indices), obj.secondSelection.Value = previousSecond; else, obj.secondSelection.Value = 0; end
             obj.refresh();
         end
+        function text = countText(obj,index)
+            count = numel(obj.items(index).indices);
+            if count==0, text = " (empty)"; else, text = " ("+count+" vertices)"; end
+        end
         function refresh(obj)
-            obj.calculateButton.Enable=matlab.lang.OnOffSwitchState(string(obj.meshSelection.Value)=="forward" && ~isempty(obj.state.result) && ~isempty(obj.state.sensitivity));
-            obj.secondSelection.Enable=matlab.lang.OnOffSwitchState(numel(obj.compatibleIndices)>1);
+            roiStatus = obj.controller.roiStatus(obj.state);
+            busy = obj.controller.busy;
+            obj.updateButton.Visible = matlab.lang.OnOffSwitchState(any(roiStatus==["stale","missing"]) && ~isempty(obj.state.brainMask));
+            obj.updateButton.Enable = matlab.lang.OnOffSwitchState(~busy);
             first = obj.firstSelection.Value; second = obj.secondSelection.Value;
-            obj.firstSelection.Enable=matlab.lang.OnOffSwitchState(first>0);
-            obj.saveButton.Enable=matlab.lang.OnOffSwitchState(first>0); obj.renameButton.Enable=matlab.lang.OnOffSwitchState(first>0);
+            obj.firstSelection.Enable = matlab.lang.OnOffSwitchState(first>0 && ~busy);
+            obj.secondSelection.Enable = matlab.lang.OnOffSwitchState(numel(obj.compatibleIndices)>1 && ~busy);
+            obj.saveButton.Enable = matlab.lang.OnOffSwitchState(first>0 && ~busy);
+            obj.renameButton.Enable = matlab.lang.OnOffSwitchState(first>obj.automaticCount && ~busy);
+            if first>obj.automaticCount, obj.selectionLabel.Value = char(obj.items(first).label); end
             canCompare = first>0 && second>0 && first~=second;
-            obj.mode.Enable = matlab.lang.OnOffSwitchState(canCompare);
+            obj.mode.Enable = matlab.lang.OnOffSwitchState(canCompare && ~busy);
             if ~canCompare, obj.mode.Value = 'single'; end
+            notes = obj.statusNotes(roiStatus);
             if first==0
                 ssdot.viz.plotSurface(obj.firstAxes,obj.surface.faces,obj.surface.vertices, ...
                     zeros(size(obj.surface.vertices,1),1),struct('faceColor',[0.7 0.7 0.7],'showColorbar',false));
                 cla(obj.secondAxes); legend(obj.secondAxes,'off'); obj.secondAxes.Visible = 'off';
                 obj.firstAxes.Layout.Column = [1 2];
                 if string(obj.meshSelection.Value)=="pial"
-                    obj.status.Text=sprintf('Full pial: %d vertices. No ROI is defined on this anatomical mesh. Reconstruction ROIs belong to the forward mesh. Import a matching ROI in Advanced.',size(obj.surface.vertices,1));
-                else
-                    obj.status.Text=sprintf('Forward model: %d vertices. Calculate an ROI from a reconstruction, or import an existing ROI in Advanced. Thresholds are in Advanced.',size(obj.surface.vertices,1));
+                    notes(end+1) = sprintf('Full pial: %d vertices. No ROI is defined on this anatomical mesh. Automatic ROIs belong to the forward mesh; import a matching ROI in Files.',size(obj.surface.vertices,1));
                 end
+                obj.status.Text = char(strjoin(notes,newline));
                 return;
             end
             if string(obj.mode.Value)=="sideBySide"
@@ -185,18 +194,52 @@ classdef RoiViewer < handle
             end
             if string(obj.mode.Value)=="single"
                 cla(obj.secondAxes); legend(obj.secondAxes,'off'); obj.secondAxes.Visible = 'off';
-                ssdot.viz.plotRoi(obj.firstAxes,obj.surface,obj.state.rois(first),obj.showNonRoi.Value);
+                ssdot.viz.plotRoi(obj.firstAxes,obj.surface,obj.items(first),obj.showNonRoi.Value);
             else
                 ssdot.viz.plotRoiComparison(obj.firstAxes,obj.secondAxes,obj.surface, ...
-                    obj.state.rois(first),obj.state.rois(second),string(obj.mode.Value),obj.showNonRoi.Value);
+                    obj.items(first),obj.items(second),string(obj.mode.Value),obj.showNonRoi.Value);
             end
-            roi = obj.state.rois(first);
-            obj.status.Text = sprintf('%s: %d ROI and %d supplied non-ROI vertices.',roi.label,numel(roi.indices),numel(roi.nonRoiIndices));
+            roi = obj.items(first);
+            if isempty(roi.indices)
+                summary = string(sprintf('%s: empty - no vertex met the ROI threshold. %d non-ROI vertices.',roi.label,numel(roi.nonRoiIndices)));
+            else
+                summary = string(sprintf('%s: %d ROI and %d non-ROI vertices.',roi.label,numel(roi.indices),numel(roi.nonRoiIndices)));
+            end
+            if isfield(roi.source,'upperThreshold')
+                summary = summary+sprintf(' Thresholds: fraction %.4g, non-ROI %.4g, exclusion %.4g.', ...
+                    roi.source.upperThreshold,roi.source.lowerThreshold,roi.source.exclusionDistance);
+            end
+            obj.status.Text = char(strjoin([string(summary),notes],newline));
         end
-        function importRoi(obj)
-            [file,folder] = uigetfile('*.mat','Import ROI associated with selected mesh');
-            if isequal(file,0), return; end
-            filename = fullfile(folder,file);
+        function notes = statusNotes(obj,roiStatus)
+            notes = strings(1,0);
+            switch roiStatus
+                case "stale", notes(end+1) = "ROI settings changed since these ROIs were calculated. Use Update ROIs or Run Analysis.";
+                case "missing"
+                    if isempty(obj.state.brainMask)
+                        notes(end+1) = "No automatic ROI for this result. Run Analysis calculates ROIs.";
+                    else
+                        notes(end+1) = "Automatic ROIs have not been calculated for this result. Use Update ROIs.";
+                    end
+                case "none", notes(end+1) = "No result yet. Run Analysis calculates the ROI for every condition.";
+            end
+            if ~obj.controller.isCurrent(obj.state) && ~isempty(obj.state.result)
+                notes(end+1) = "OUT OF DATE: these ROIs come from a result computed with different settings.";
+            end
+        end
+        function value = comparison(obj)
+            %COMPARISON The displayed comparison, as indices into exportable [automatic, imported] ROIs.
+            value = [];
+            first = obj.firstSelection.Value; second = obj.secondSelection.Value;
+            if string(obj.mode.Value)~="single" && first>0 && second>0
+                value = struct('first',first,'second',second,'mode',string(obj.mode.Value));
+            end
+        end
+        function importRoi(obj,filename)
+            if nargin<2
+                filename = obj.controller.chooser.openFile({'*.mat','ROI MAT file'},'Import ROI associated with the selected mesh','');
+                if strlength(filename)==0, return; end
+            end
             try
                 roi = ssdot.io.readRoi(filename,obj.surface);
             catch exception
@@ -210,26 +253,15 @@ classdef RoiViewer < handle
             end
             obj.addRoi(roi);
         end
-        function saveRoi(obj)
+        function saveRoi(obj,filename)
             index = obj.firstSelection.Value;
             assert(index>0,'SSDOT:NoRoi','Select an ROI first.');
-            [file,folder] = uiputfile('*.mat','Save ROI with mesh metadata');
-            if ~isequal(file,0), ssdot.io.saveRoi(fullfile(folder,file),obj.state.rois(index),obj.surface); end
-        end
-        function calculateRoi(obj)
-            assert(~isempty(obj.state.result) && ~isempty(obj.state.sensitivity), ...
-                'SSDOT:MissingResult','Calculate a reconstruction with sensitivity masks first.');
-            assert(string(obj.meshSelection.Value)=="forward",'SSDOT:RoiMesh', ...
-                'Reconstruction ROI selection uses the forward-model mesh, not full pial indices.');
-            condition = obj.selectionCondition.Value;
-            validateattributes(condition,{'numeric'},{'scalar','integer','positive','<=',size(obj.state.result.hbo,2)});
-            cfg = struct('original_ROI',0);
-            [indices,nonRoi] = ssdot.recon.findRoi(obj.state.result.hbo(:,condition),obj.state.result.hbr(:,condition), ...
-                obj.state.sensitivity.M,obj.surface.vertices,obj.upperThreshold.Value,obj.lowerThreshold.Value,obj.exclusionDistance.Value,cfg);
-            source = struct('kind',"Existing findRoi threshold calculation",'condition',condition, ...
-                'upperThreshold',obj.upperThreshold.Value,'lowerThreshold',obj.lowerThreshold.Value, ...
-                'exclusionDistance',obj.exclusionDistance.Value,'node',obj.state.nodeName,'config',obj.state.config,'resultProfile',obj.state.runProfile);
-            obj.addRoi(ssdot.io.roiFromIndices(obj.surface,indices,nonRoi,obj.selectionLabel.Value,source));
+            if nargin<2
+                stem = regexprep(char(obj.items(index).label),'[^a-zA-Z0-9._-]','_');
+                filename = obj.controller.chooser.saveFile({'*.mat','ROI MAT file'},'Export ROI with mesh metadata',[stem '.mat']);
+                if strlength(filename)==0, return; end
+            end
+            ssdot.io.saveRoi(filename,obj.items(index),obj.surface);
         end
         function distance = measureDistance(obj)
             if strcmp(obj.endpointMode.Value,'Vertex indices')

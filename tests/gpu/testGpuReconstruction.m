@@ -7,14 +7,12 @@ function testActualDeviceCompletesRecordingReconstruction(t)
     report=ssdot.app.gpuDiagnostics(true);
     assumeTrue(t,report.available && report.computationPassed, ...
         'Actual GPU reconstruction NOT VALIDATED: install/enable Parallel Computing Toolbox and a compatible GPU.');
-    app.profileDropDown.Value='preview'; app.processingModeDropDown.Value='selected';
     fixture=t.applyFixture(matlab.unittest.fixtures.TemporaryFolderFixture); app.controller.environment.paths=ssdot.app.runtimePaths(fixture.Folder);
-    group=app.loadDataset(fullfile(root,'ST001'),false);
-    app.recordingDropDown.Value=1; app.controller.selectRecording(false);
+    group=app.openDataset(fullfile(root,'ST001'));
+    app.profileDropDown.Value='preview'; app.controller.changeProfile(); app.scopeDropDown.Value='selected';
     % This captured reference predates the professor-original temporal default.
-    state=app.controller.stateForNode(group.subjs(1).sess(1).runs(1));
-    config=state.config; config.temporalMode="durationBased"; config.temporalParameters=[0.1 3 7 0.5 3 7];
-    state.applyConfig(config); app.refreshSettings(config);
+    app.settings.temporalMode.Value='durationBased'; app.settings.temporalParameters.Value='0.1 3 7 0.5 3 7';
+    app.controller.applySettings();
     app.deviceDropDown.Value='gpu'; callback=app.deviceDropDown.ValueChangedFcn; callback(app.deviceDropDown,struct());
     callback=app.runButton.ButtonPushedFcn; callback(app.runButton,struct());
     verifyEmpty(t,app.controller.lastError);
@@ -32,7 +30,7 @@ function testActualDeviceCompletesRecordingReconstruction(t)
     report.resources=state.resources;
     save(fullfile(root,'results','validation','gpu-validation.mat'),'report');
     fprintf('GPU baseline differences: HbO %.3g, HbR %.3g (absolute).\n',report.maxHbOAbsDifference,report.maxHbRAbsDifference);
-    app.showTab('diagnostics');
+    app.showTab('log');
     exportapp(app.figure,fullfile(root,'results','validation','workspace-gpu-diagnostics.png'));
     fprintf('Actual GPU reconstruction passed on %s with %.2f GiB available.\n',report.name,report.availableMemory/2^30);
 end

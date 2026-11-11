@@ -18,7 +18,12 @@ function testMainLaunchesUnifiedWorkspace(t)
     root=fileparts(fileparts(mfilename('fullpath'))); addpath(root);
     app=main(); t.addTeardown(@()delete(app));
     verifyClass(t,app,'ssdot.app.WorkspaceApp');
-    verifyEqual(t,numel(findall(app.figure,'Type','uitab')),14);
+    titles=string(get(app.tabGroup.Children,'Title'))';
+    verifyEqual(t,titles,["Overview","Signals","Results","ROI","Model","Average","Settings","Log"]);
+    verifyEqual(t,numel(findall(app.figure,'Type','uitab')),8);
     verifyEqual(t,string(app.deviceDropDown.Value),"cpu");
     verifyEqual(t,string(app.profileDropDown.Value),"research");
+    verifyEqual(t,string(app.runButton.Text),"Run Analysis"); verifyEqual(t,string(app.runButton.Enable),"off");
+    % Research validation is a programmatic workflow, not a workspace tab.
+    verifyEmpty(t,which('ssdot.app.ValidationView')); verifyNotEmpty(t,which('ssdot.validation.runStudy'));
 end

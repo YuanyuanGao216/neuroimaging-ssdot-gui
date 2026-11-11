@@ -5,12 +5,16 @@ classdef FullResolutionWorkflowTest < matlab.uitest.TestCase
             app=main(); t.addTeardown(@()delete(app));
             hardware=ssdot.app.gpuDiagnostics(true);
             t.assumeTrue(hardware.available && hardware.computationPassed,'An actual GPU is required; this is not a CPU fallback test.');
-            app.processingModeDropDown.Value='selected';
             fixture=t.applyFixture(matlab.unittest.fixtures.TemporaryFolderFixture); app.controller.environment.paths=ssdot.app.runtimePaths(fixture.Folder);
-            t.chooseDialog("uigetdir",@()t.press(app.loadButton),Folder=fullfile(root,'ST001'));
-            t.choose(app.recordingDropDown,string(app.recordingDropDown.Items{2}));
-            t.choose(app.deviceDropDown,"GPU");
-            t.press(app.runButton); t.assertEmpty(app.controller.lastError);
+            app.controller.chooser.folder=@(varargin)string(fullfile(root,'ST001'));
+            t.press(app.loadButton); t.choose(app.recordingDropDown,string(app.recordingDropDown.Items{2}));
+            t.choose(app.scopeDropDown,"Shown recording only"); t.choose(app.deviceDropDown,"GPU");
+            t.press(app.runButton);
+            if ~isempty(app.controller.lastError) && strcmp(app.controller.lastError.identifier,'SSDOT:HostMemory')
+                % The preflight refusing to allocate is correct behaviour, but it means this host cannot run the check now.
+                t.assumeFail("Full-resolution check not executed: "+string(app.controller.lastError.message));
+            end
+            t.assertEmpty(app.controller.lastError);
             state=app.controller.stateForNode(app.controller.selectedNode);
             t.verifyEqual([state.config.brainSamplingThreshold state.config.scalpSamplingThreshold state.config.brainSigma state.config.scalpSigma],[5 5 5 5]);
             t.verifyEqual(state.resources.brainKernels,834); t.verifyEqual(state.resources.scalpKernels,894);
@@ -20,6 +24,7 @@ classdef FullResolutionWorkflowTest < matlab.uitest.TestCase
             t.verifyTrue(app.controller.gpuReconstructionValidated); t.verifyEmpty(state.result.normalMatrix);
             t.verifyLessThan(state.result.solverDiagnostics.originalNormalResidual,1e-8);
             t.verifyTrue(state.resources.hostFits && state.resources.gpuFits && state.resources.diskFits);
+            t.verifyEqual(app.controller.roiStatus(state),"current"); t.verifyNumElements(app.controller.autoRois(state),size(state.result.hbo,2));
             t.verifyEqual(numel(findall(groot,'Type','figure')),1);
             t.choose(app.chromophoreDropDown,"HbR"); t.choose(app.conditionDropDown,string(app.conditionDropDown.Items{2}));
             patch=findall(app.resultAxes(1),'Type','patch'); t.verifyEqual(patch.FaceVertexCData,state.result.hbr(:,2));
