@@ -666,6 +666,7 @@ classdef AppController < handle
             if nargin<3, showResults=true; end
             assert(~isempty(state.spatialBasis) && ~isempty(state.observations),'SSDOT:MissingBasis','Prepare spatial bases and observations first.');
             model=struct('forwardMatrix',state.sensitivity.A,'spatialBasis',state.spatialBasis,'temporalBasis',state.temporalBasis,'masks',state.sensitivity.M,'vertexCount',size(state.atlas.fwmodel.mesh.vertices,1));
+            if state.config.spatialRegularization, model.brainScaling=state.sensitivity.ll; end
             result=ssdot.recon.reconstructImage(model,state.observations,state.config,@(label,done,total)obj.reportProgress(label,done,total));
             elapsed=0; if ~isempty(obj.currentRunStartedAt), elapsed=toc(obj.currentRunStartedAt); end
             result.provenance=struct('profile',state.runProfile,'config',state.config,'recording',state.nodeName, ...
@@ -677,6 +678,11 @@ classdef AppController < handle
                 'preview',state.previewDerived || state.runProfile=="preview",'elapsedSeconds',elapsed, ...
                 'inputFingerprint',state.inputFingerprint,'atlasFile',state.atlasFile,'forwardFolder',state.forwardFolder);
             result.provenance.solverDiagnostics=result.solverDiagnostics;
+            if state.config.spatialRegularization
+                result.provenance.spatialOutputScaling="Professor-compatible division by last-wavelength brain sensitivity scale";
+            else
+                result.provenance.spatialOutputScaling="none";
+            end
             result.provenance.algorithmIdentity=state.algorithmIdentity; result.provenance.cacheKey=state.cacheKey;
             assert(all(isfinite(result.hbo),'all') && all(isfinite(result.hbr),'all'),'SSDOT:NonfiniteResult','Reconstruction produced nonfinite values. Review the scientific settings and diagnostics.');
             state.result=result;

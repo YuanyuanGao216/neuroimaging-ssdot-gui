@@ -100,6 +100,18 @@ function testZeroAndNearlyExactObservations(t)
         if scale==0,verifyEqual(t,result.hbo,zeros(size(result.hbo)));verifyEqual(t,result.hbr,zeros(size(result.hbr)));end
     end
 end
+function testNormalizedProjectionUsesLastWavelengthScalingOnce(t)
+    [model,o,cfg]=fixture(); cfg.spatialRegularization=false;
+    original=ssdot.recon.reconstructImage(model,o,cfg);
+    model.brainScaling=[.5 2 3 7]; cfg.spatialRegularization=true;
+    scaled=ssdot.recon.reconstructImage(model,o,cfg);
+    verifyEqual(t,scaled.coefficients,original.coefficients,'AbsTol',1e-10);
+    verifyEqual(t,scaled.hbo,original.hbo./model.brainScaling(:),'AbsTol',1e-12);
+    verifyEqual(t,scaled.hbr,original.hbr./model.brainScaling(:),'AbsTol',1e-12);
+    verifyEqual(t,scaled.concentrations.intensity_HbO{1},original.concentrations.intensity_HbO{1}./model.brainScaling(:),'AbsTol',1e-12);
+    broken=rmfield(model,'brainScaling');verifyError(t,@()ssdot.recon.reconstructImage(broken,o,cfg),'SSDOT:MissingOutputScaling');
+    model.brainScaling(1)=0;verifyError(t,@()ssdot.recon.reconstructImage(model,o,cfg),'MATLAB:expectedPositive');
+end
 function [model,o,cfg]=fixture()
     rng(8); n=3; nt=48;
     G=struct('G_brain',rand(2,4),'G_scalp',rand(2,3));

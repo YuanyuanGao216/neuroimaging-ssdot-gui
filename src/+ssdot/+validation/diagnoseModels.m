@@ -31,6 +31,7 @@ function diagnostic=diagnoseModels(prepared,result,options,folder,progress)
             local=cfg; local.alpha=alpha;
             [b,~,~,diag]=ssdot.recon.solveCompressed(system,local); b=b(:);
             conc=ssdot.recon.reconstructConcentrations(model.spatialBasis,model.temporalBasis,b,1,false,'cpu');
+            conc=ssdot.recon.applyOutputScaling(conc,model,local);
             projection=struct('T',model.temporalBasis,'M',model.masks,'Conc',conc);
             [maps.hbo,maps.hbr]=ssdot.recon.projectToVertices(projection,model.vertexCount);
         end

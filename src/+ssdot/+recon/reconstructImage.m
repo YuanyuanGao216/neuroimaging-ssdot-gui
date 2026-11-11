@@ -53,6 +53,7 @@ function result = reconstructImage(model, observations, config, progress)
     phase=tic;
     concentrations = ssdot.recon.reconstructConcentrations(model.spatialBasis, ...
         model.temporalBasis, b, 1, false, config.device);
+    concentrations=ssdot.recon.applyOutputScaling(concentrations,model,config);
     projection = struct("T", model.temporalBasis, "M", model.masks, "Conc", concentrations);
     [hbo, hbr] = ssdot.recon.projectToVertices(projection, model.vertexCount);
     times.recoveryAndProjection=toc(phase); diagnostics.timings=times;

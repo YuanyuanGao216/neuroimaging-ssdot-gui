@@ -29,6 +29,7 @@ function prepared=prepareModel(recording,rawModel,atlas,config,progress,shared)
     o=ssdot.recon.buildObservations(recording,S,rawModel.probe,T,config);
     model=struct('forwardMatrix',S.A,'spatialBasis',G,'temporalBasis',T,'masks',S.M, ...
         'vertexCount',size(atlas.fwmodel.mesh.vertices,1));
+    if config.spatialRegularization, model.brainScaling=S.ll; end
     prepared=struct('recording',recording,'probe',rawModel.probe,'sensitivity',S,'model',model, ...
         'observations',o,'centers',centers,'config',config,'resources',resources);
 end
