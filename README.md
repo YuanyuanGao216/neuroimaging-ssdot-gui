@@ -30,11 +30,11 @@ app = main();              % equivalent to main("gui")
 | --- | --- |
 | Overview | Dataset summary, model-input readiness and the status of each recording |
 | Signals | Stored raw intensity and optical density, with stored averages when available |
-| Results | HbO/HbR maps by condition, with provenance and color scale |
+| Results | HbO/HbR maps by condition, with provenance and a fixed, automatic or custom symmetric color range (display only) |
 | ROI | Automatic ROIs from Run Analysis, imported ROIs, comparisons and coordinate distances |
-| Model | Registered probe, sensitivity, kernel centers and temporal basis |
+| Model | Registered probe, sensitivity, kernel centers, the single temporal basis and the convolved temporal design over the whole recording |
 | Average | Arithmetic mean of completed recordings with matching settings |
-| Settings | Reconstruction parameters, model-input locations, ROI thresholds and figure export options |
+| Settings | Reconstruction parameters, the dataset's Homer GLM timing, model-input locations, ROI thresholds and figure export options |
 | Log | Stage timings, activity log, technical error details and GPU check |
 
 Settings apply to the whole workspace. Changing them never discards results: existing results are marked **Out of date** until the next Run Analysis, which reuses every result whose inputs and settings are unchanged. ROI thresholds can be changed after a run; **Update ROIs** recalculates them from existing results without repeating the reconstruction. An empty ROI (no vertex above the threshold) is a valid outcome and is reported as such.
@@ -66,6 +66,8 @@ Use `SSDOT_DATA_ROOT` to change the default dataset browser location. Atlas and 
 **Research** uses full configured resolution. The optional coarse **Preview** profile is intended for diagnostics. Scientific parameters remain explicit and should be selected for the acquisition and study.
 
 The reconstruction backend uses exact temporal QR compression to avoid materializing the expanded design matrix. It retains double precision and the configured regularization objective without reducing spatial resolution. A dense reference backend is also available.
+
+Opening a dataset also reads the `hmrR_GLM` call stored in its Homer processing stream (time range, basis type, gamma parameters, short-separation threshold and drift order) and reports where it differs from the current settings. It is never applied automatically; **Settings > Use these** copies it into the workspace settings. Only the modified gamma basis (`idxBasis` 2) is supported by the reconstruction.
 
 The default `professorOriginal` temporal mode uses onset impulses and configured-duration gamma smoothing. `durationBased` provides event-duration spreading as an alternative. Recorded event durations remain unchanged. Current defaults are defined in [defaultConfig.m](src/+ssdot/+app/defaultConfig.m); temporal compatibility does not imply that every application setting matches the original paper's protocol.
 

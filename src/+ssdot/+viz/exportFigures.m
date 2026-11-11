@@ -57,6 +57,7 @@ function report = exportFigures(data,folder,options,progress)
                 hb=upper(string(job.kind)); if hb=="HBO", hb="HbO"; else, hb="HbR"; end
                 values=data.result.(job.kind)(:,job.index); limits=[-1 1]*1e-9;
                 if options.autoColor, peak=max(abs(values)); if peak>0, limits=[-peak peak]; end; end
+                if isfield(options,'colorLimit') && ~isempty(options.colorLimit), limits=[-1 1]*options.colorLimit; end
                 ssdot.viz.plotReconstruction(axesPair,data.atlas,values,limits,hb);
                 descriptor=ssdot.io.surfaceFromAtlas(data.atlas); condition=conditionName(job.index);
                 titleText=hb+" / "+condition;

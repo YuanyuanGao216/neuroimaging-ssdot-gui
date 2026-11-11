@@ -121,6 +121,41 @@ classdef WorkspaceUsabilityTest < matlab.uitest.TestCase
             t.verifyEqual(string(app.recordingTable.Data(:,6)),repmat("Complete",3,1));
             t.verifyEqual(numel(findall(groot,'Type','figure')),1);
         end
+        function homerGlmTimingContinuousDesignAndCustomColorRange(t)
+            % Dr. Gao's requests: read the GLM timing from the Homer stream, view the
+            % continuous (convolved) time base, and choose the display range.
+            app = t.openSt001("preview"); controller = app.controller;
+            t.verifyTrue(contains(string(app.overviewSummary.Text),'Homer hmrR_GLM (all 3 recordings)'));
+            t.verifyTrue(contains(string(app.overviewSummary.Text),'gamma parameters'));
+            t.verifyEqual(controller.homerGlm.paramsBasis,[0.1 3 7 0.5 3 7]);
+            t.verifyEqual(controller.config.temporalParameters,[0.1 3 7 0.1 3 7],'Opening a dataset does not change settings.');
+            t.choose(app.tabGroup,"Settings"); t.verifyEqual(string(app.homerGlmButton.Enable),"on");
+            t.press(app.homerGlmButton); t.verifyEmpty(controller.lastError);
+            t.verifyEqual(controller.config.temporalParameters,[0.1 3 7 0.5 3 7]); t.verifyEqual(controller.config.temporalRange,[-2 18]);
+            t.verifyEqual(controller.config.shortSeparationThreshold,22); t.verifyEqual(controller.config.driftOrder,3);
+            t.verifyEqual(string(app.profileDropDown.Value),"custom");
+            t.verifyEqual(string(app.settings.temporalParameters.Value),"0.1 3 7 0.5 3 7");
+            t.verifyEqual(string(app.homerGlmButton.Enable),"off"); t.verifyTrue(contains(string(app.homerGlmLabel.Text),'match'));
+            t.verifyEqual(controller.cacheStatistics.solves,0);
+            t.choose(app.scopeDropDown,"Shown recording only"); t.press(app.runButton); t.assertEmpty(controller.lastError);
+            state = controller.stateForNode(controller.selectedNode);
+            t.verifyEqual(state.result.provenance.gammaParameters,[0.1 3 7 0.5 3 7]);
+            t.choose(app.tabGroup,"Model"); t.choose(app.modelMode,"Temporal design (whole recording)");
+            t.verifyEmpty(controller.lastError);
+            recording = ssdot.io.readRun(controller.selectedNode);
+            expected = {state.temporalBasis.T_HbO_brain,state.temporalBasis.T_HbR_brain};
+            for index = 1:2
+                lines = findall(app.modelAxes(index),'Type','line');
+                t.verifyNumElements(lines,size(expected{index},2));
+                t.verifyTrue(all(arrayfun(@(line)numel(line.XData)==numel(recording.time),lines)));
+                t.verifyTrue(any(arrayfun(@(line)isequal(line.YData(:),expected{index}(:,1)),lines)));
+            end
+            t.choose(app.tabGroup,"Results"); t.choose(app.scaleDropDown,"Custom symmetric (display only)");
+            t.verifyEqual(string(app.colorLimitField.Enable),"on");
+            t.type(app.colorLimitField,2e-10); t.verifyEmpty(controller.lastError);
+            t.verifyEqual(app.resultAxes(1).CLim,[-2e-10 2e-10],'AbsTol',1e-22);
+            patches = findall(app.resultAxes(1),'Type','patch'); t.verifyEqual(patches.FaceVertexCData,state.result.hbo(:,1));
+        end
         function closingDuringRunStopsCleanly(t)
             app = t.openSt001("preview"); timersBefore = numel(timerfindall);
             closer = timer('ExecutionMode','fixedSpacing','Period',0.05,'BusyMode','drop', ...

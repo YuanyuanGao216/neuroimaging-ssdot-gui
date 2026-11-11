@@ -21,6 +21,9 @@ classdef AppController < handle
         atlasFile = ""
         forwardFolder = ""
         roiSettings = struct('upperThreshold',0.90,'lowerThreshold',0.01,'exclusionDistance',40)
+        % hmrR_GLM settings stored in the dataset's Homer processing stream (read on open).
+        homerGlm = []
+        homerGlmNote = ""
         % File and folder choices; tests replace these handles instead of driving OS dialogs.
         chooser
         messages = ""
@@ -121,6 +124,7 @@ classdef AppController < handle
                 obj.runs = [obj.runs,obj.leafRuns(group(index))]; obj.collectAverageNodes(group(index)); %#ok<AGROW>
             end
             obj.recordingInfo = arrayfun(@(node)describeRecording(node),obj.runs);
+            obj.readDatasetGlm();
             obj.atlasFile = fullfile(folder,'atlasViewer.mat'); obj.forwardFolder = folder;
             obj.app.atlasPath.Value = char(obj.atlasFile); obj.app.forwardPath.Value = char(obj.forwardFolder);
             obj.app.datasetPath.Value = char(folder);
@@ -773,6 +777,70 @@ classdef AppController < handle
             if obj.roiStatus(state)=="stale", text = text+" ROI settings changed since calculation."; end
         end
 
+        %% Homer GLM settings of the dataset (read only; applied on request)
+        function readDatasetGlm(obj)
+            obj.homerGlm = []; obj.homerGlmNote = "";
+            if isempty(obj.runs), return; end
+            glms = arrayfun(@(node)ssdot.io.readHomerGlm(node),obj.runs);
+            found = find([glms.found]);
+            if isempty(found)
+                obj.homerGlmNote = "The Homer processing stream has no hmrR_GLM call; temporal settings come from the profile.";
+                return;
+            end
+            reference = glms(found(1)); fields = ["trange","idxBasis","paramsBasis","rhoSD_ssThresh","driftOrder"];
+            consistent = all(arrayfun(@(glm)all(arrayfun(@(name)isequal(glm.(name),reference.(name)),fields)),glms(found)));
+            scope = sprintf('all %d recordings',numel(obj.runs));
+            if numel(found)<numel(obj.runs), scope = sprintf('%d of %d recordings',numel(found),numel(obj.runs)); end
+            if ~consistent
+                obj.homerGlmNote = "Homer hmrR_GLM settings differ between recordings; they are shown per recording in the Log and not offered as one setting.";
+                for index = found
+                    obj.log(sprintf('%s hmrR_GLM: trange %s, idxBasis %g, paramsBasis %s, rhoSD_ssThresh %g, driftOrder %g.', ...
+                        obj.runs(index).name,mat2str(glms(index).trange),glms(index).idxBasis,mat2str(glms(index).paramsBasis), ...
+                        glms(index).rhoSD_ssThresh,glms(index).driftOrder));
+                end
+                return;
+            end
+            obj.homerGlm = reference;
+            obj.homerGlmNote = string(sprintf('Homer hmrR_GLM (%s): time range %s s, basis %g, parameters %s, short-separation %g mm, drift order %g.', ...
+                scope,mat2str(reference.trange),reference.idxBasis,mat2str(reference.paramsBasis),reference.rhoSD_ssThresh,reference.driftOrder));
+            if reference.idxBasis~=2 || numel(reference.paramsBasis)~=6
+                obj.homerGlmNote = obj.homerGlmNote+" This basis type is not supported by the SS-DOT reconstruction (modified gamma, 6 parameters, only).";
+            end
+            obj.log(obj.homerGlmNote);
+        end
+        function config = homerGlmConfig(obj)
+            %HOMERGLMCONFIG Workspace settings with the dataset's Homer GLM timing copied in.
+            glm = obj.homerGlm; config = obj.config;
+            config.temporalRange = glm.trange(:)'; config.temporalParameters = glm.paramsBasis(:)';
+            config.shortSeparationThreshold = glm.rhoSD_ssThresh; config.driftOrder = glm.driftOrder;
+        end
+        function result = canApplyHomerGlm(obj)
+            result = ~obj.busy && ~isempty(obj.homerGlm) && obj.homerGlm.idxBasis==2 && numel(obj.homerGlm.paramsBasis)==6 && ...
+                ~sameConfig(obj.homerGlmConfig(),obj.config);
+        end
+        function text = homerGlmDifference(obj)
+            text = "";
+            if isempty(obj.homerGlm) || obj.homerGlm.idxBasis~=2 || numel(obj.homerGlm.paramsBasis)~=6, return; end
+            target = obj.homerGlmConfig(); names = ["temporalRange","temporalParameters","shortSeparationThreshold","driftOrder"];
+            labels = ["time range","gamma parameters","short-separation threshold","drift order"];
+            differs = arrayfun(@(name)~isequal(double(target.(name)),double(obj.config.(name))),names);
+            if any(differs)
+                text = " Current settings differ in: "+strjoin(labels(differs),", ")+". Settings > Use these applies them.";
+            else
+                text = " Current settings match these.";
+            end
+        end
+        function applyHomerGlm(obj)
+            assert(~obj.busy,'SSDOT:Busy','Settings are locked during an analysis.');
+            assert(~isempty(obj.homerGlm),'SSDOT:NoHomerGlm','The open dataset has no consistent Homer hmrR_GLM settings.');
+            assert(obj.homerGlm.idxBasis==2 && numel(obj.homerGlm.paramsBasis)==6,'SSDOT:HomerBasis', ...
+                'Homer basis type %g is not supported by the SS-DOT reconstruction.',obj.homerGlm.idxBasis);
+            config = obj.homerGlmConfig(); obj.validateConfig(config);
+            obj.config = config; obj.profile = "custom"; obj.app.profileDropDown.Value = 'custom';
+            obj.app.refreshSettings(obj.config);
+            obj.settingsChanged('Applied the dataset''s Homer hmrR_GLM timing to the workspace settings');
+        end
+
         %% Status and readiness
         function current = isCurrent(obj,state)
             current = ~isempty(state.result) && sameConfig(state.config,obj.config) && ...
@@ -800,12 +868,15 @@ classdef AppController < handle
             end
             obj.app.recordingTable.Data = data;
             report = obj.readiness(); obj.app.readinessLabel.Text = char(report.message);
+            obj.app.homerGlmLabel.Text = char(obj.homerGlmNote+obj.homerGlmDifference());
+            if isempty(obj.runs), obj.app.homerGlmLabel.Text = 'Open a dataset to read its Homer hmrR_GLM settings.'; end
             if isempty(obj.runs)
                 obj.app.overviewSummary.Text = 'No dataset open.';
             else
                 model = "Model inputs found: atlas and forward model (fw/Adot.mat, fw/Adot_scalp.mat). Compatibility with each recording is verified by Run Analysis.";
                 if ~report.modelReady, model = "Missing model input(s): "+strjoin(report.missing,"; "); end
-                obj.app.overviewSummary.Text = char("Dataset: "+obj.datasetRoot+newline+numel(obj.runs)+" recording(s). "+model);
+                obj.app.overviewSummary.Text = char("Dataset: "+obj.datasetRoot+newline+numel(obj.runs)+" recording(s). "+model+ ...
+                    newline+obj.homerGlmNote+obj.homerGlmDifference());
             end
         end
         function result = canSaveSession(obj)
@@ -1043,14 +1114,30 @@ classdef AppController < handle
             condition = obj.app.conditionDropDown.Value;
             if ~isnumeric(condition) || condition<1 || condition>numel(names), condition = 1; end
             hb = lower(string(obj.app.chromophoreDropDown.Value)); values = state.result.(hb)(:,condition);
-            limits = [-1 1]*1e-9;
-            if startsWith(string(obj.app.scaleDropDown.Value),"Auto"), peak = max(abs(values)); if peak>0, limits = [-peak peak]; end; end
+            limits = obj.colorLimits(values);
             ssdot.viz.plotReconstruction(obj.app.resultAxes,state.atlas,values,limits,string(obj.app.chromophoreDropDown.Value));
             obj.app.resultLabel.Text = char(resultDescription(obj,state,names(condition),limits));
+        end
+        function limits = colorLimits(obj,values)
+            %COLORLIMITS Display-only symmetric limits: fixed original, automatic or custom.
+            scale = string(obj.app.scaleDropDown.Value);
+            obj.app.colorLimitField.Enable = matlab.lang.OnOffSwitchState(startsWith(scale,"Custom"));
+            limits = [-1 1]*1e-9;
+            if startsWith(scale,"Auto"), peak = max(abs(values)); if peak>0, limits = [-peak peak]; end
+            elseif startsWith(scale,"Custom"), limits = [-1 1]*obj.app.colorLimitField.Value; end
         end
         function renderModel(obj,state)
             choice = string(obj.app.modelMode.Value); axesPair = obj.app.modelAxes;
             notice = obj.app.modelNotice;
+            if choice=="Temporal design (whole recording)"
+                if isempty(state.temporalBasis) || ~isa(state.node,'RunClass')
+                    obj.modelUnavailable("The convolved temporal design is prepared by Run Analysis for a recording."); return;
+                end
+                time = ssdot.io.readRun(state.node).time;
+                ssdot.viz.plotTemporalDesign(axesPair,state.temporalBasis,time);
+                notice.Text = char(state.nodeName+": the gamma basis convolved with each condition's events over the whole recording, as used by the most recent analysis.");
+                return;
+            end
             if choice=="Temporal basis"
                 if isempty(state.temporalBasis), obj.modelUnavailable("The temporal basis is prepared by Run Analysis."); return; end
                 ssdot.viz.plotTemporalBasis(axesPair,state.temporalBasis);
@@ -1108,6 +1195,8 @@ classdef AppController < handle
             assert(~isempty(options.formats),'SSDOT:ExportFormat','Choose an export format in Settings > Figure export.');
             assert(any([options.maps options.temporal options.kernels options.rois options.inputViews]),'SSDOT:ExportContent','Choose at least one figure type in Settings > Figure export.');
             options.autoColor = startsWith(string(obj.app.scaleDropDown.Value),"Auto"); options.showNonRoi = true;
+            options.colorLimit = [];
+            if startsWith(string(obj.app.scaleDropDown.Value),"Custom"), options.colorLimit = obj.app.colorLimitField.Value; end
             if string(options.scope)=="selected", assert(~isempty(obj.selectedNode),'SSDOT:NoSelection','Select a recording to export.'); end
             states = {}; inputFolders = string(obj.datasetRoot);
             for state = obj.allStates()

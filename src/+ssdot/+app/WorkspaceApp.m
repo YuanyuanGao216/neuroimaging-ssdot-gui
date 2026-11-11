@@ -34,6 +34,9 @@ classdef WorkspaceApp < matlab.apps.AppBase
         conditionDropDown
         chromophoreDropDown
         scaleDropDown
+        colorLimitField
+        homerGlmLabel
+        homerGlmButton
         resultLabel
         resultAxes
         roiHost
@@ -81,7 +84,7 @@ classdef WorkspaceApp < matlab.apps.AppBase
             app.statusLabel = uilabel(root,'Text','Open a dataset to begin.');
             app.inputControls = {app.loadButton,app.openSessionButton,app.saveSessionButton,app.exportButton, ...
                 app.recordingDropDown,app.scopeDropDown,app.profileDropDown,app.deviceDropDown,app.useCpuButton, ...
-                app.runButton,app.atlasPath,app.forwardPath,app.modelButton,app.gpuButton,app.averageNode,app.recordingTable};
+                app.runButton,app.atlasPath,app.forwardPath,app.modelButton,app.gpuButton,app.averageNode,app.recordingTable,app.homerGlmButton};
             app.controller = ssdot.app.AppController(app,environment);
         end
         function group = openDataset(app,folder)
@@ -138,6 +141,8 @@ classdef WorkspaceApp < matlab.apps.AppBase
             app.exportButton.Enable = matlab.lang.OnOffSwitchState(controller.hasExportableResults());
             app.modelButton.Enable = matlab.lang.OnOffSwitchState(loaded && readiness.modelReady);
             app.averageNode.Enable = matlab.lang.OnOffSwitchState(numel(controller.averageNodes)>0);
+            app.homerGlmButton.Enable = matlab.lang.OnOffSwitchState(controller.canApplyHomerGlm());
+            app.colorLimitField.Enable = matlab.lang.OnOffSwitchState(startsWith(string(app.scaleDropDown.Value),"Custom"));
             app.readinessLabel.Text = char(readiness.message);
             if ~isempty(app.roiViewer) && isvalid(app.roiViewer), app.roiViewer.refresh(); end
         end
@@ -281,14 +286,17 @@ classdef WorkspaceApp < matlab.apps.AppBase
         end
         function makeResults(app)
             grid = uigridlayout(app.tabs.results,[3 2]); grid.RowHeight = {30,'fit','1x'};
-            controls = uigridlayout(grid,[1 6]); controls.Layout.Column = [1 2];
-            controls.ColumnWidth = {65,'1x',50,80,75,240}; controls.Padding = [0 0 0 0];
+            controls = uigridlayout(grid,[1 7]); controls.Layout.Column = [1 2];
+            controls.ColumnWidth = {65,'1x',50,80,75,230,90}; controls.Padding = [0 0 0 0];
             uilabel(controls,'Text','Condition');
             app.conditionDropDown = uidropdown(controls,'Items',{'No result'},'ItemsData',1,'ValueChangedFcn',@(~,~)app.controller.perform(@()app.renderActiveTab()));
             uilabel(controls,'Text','Signal');
             app.chromophoreDropDown = uidropdown(controls,'Items',{'HbO','HbR'},'ValueChangedFcn',@(~,~)app.controller.perform(@()app.renderActiveTab()));
             uilabel(controls,'Text','Color scale');
-            app.scaleDropDown = uidropdown(controls,'Items',{'Fixed +/-1e-9 (original display)','Auto symmetric (display only)'}, ...
+            app.scaleDropDown = uidropdown(controls,'Items',{'Fixed +/-1e-9 (original display)','Auto symmetric (display only)','Custom symmetric (display only)'}, ...
+                'ValueChangedFcn',@(~,~)app.controller.perform(@()app.renderActiveTab()));
+            app.colorLimitField = uieditfield(controls,'numeric','Value',1e-9,'Limits',[0 Inf],'LowerLimitInclusive','off', ...
+                'ValueDisplayFormat','%.3g','Enable','off','Tooltip','Custom color limit: the map is shown on [-limit, +limit]. Values are unchanged.', ...
                 'ValueChangedFcn',@(~,~)app.controller.perform(@()app.renderActiveTab()));
             app.resultLabel = uilabel(grid,'Text','No result for this recording yet. Press Run Analysis.','WordWrap','on');
             app.resultLabel.Layout.Column = [1 2];
@@ -302,7 +310,7 @@ classdef WorkspaceApp < matlab.apps.AppBase
         function makeModel(app)
             grid = uigridlayout(app.tabs.model,[3 2]); grid.RowHeight = {30,'fit','1x'};
             row = uigridlayout(grid,[1 2]); row.Layout.Column = [1 2]; row.ColumnWidth = {260,'1x'}; row.Padding = [0 0 0 0];
-            app.modelMode = uidropdown(row,'Items',{'Registered probe','Brain sensitivity','Scalp sensitivity','Brain kernel centers','Scalp kernel centers','Temporal basis'}, ...
+            app.modelMode = uidropdown(row,'Items',{'Registered probe','Brain sensitivity','Scalp sensitivity','Brain kernel centers','Scalp kernel centers','Temporal basis','Temporal design (whole recording)'}, ...
                 'ValueChangedFcn',@(~,~)app.controller.perform(@()app.renderActiveTab()));
             app.modelButton = uibutton(row,'Text','Load model for viewing','Enable','off', ...
                 'Tooltip','Reads the atlas and forward model to inspect registration and sensitivity. Does not reconstruct.', ...
@@ -322,9 +330,14 @@ classdef WorkspaceApp < matlab.apps.AppBase
             app.averageHost = uipanel(grid,'BorderType','none');
         end
         function makeSettings(app)
-            grid = uigridlayout(app.tabs.settings,[34 3]); grid.ColumnWidth = {260,'1x',90}; grid.Scrollable = 'on';
-            grid.RowHeight = repmat({26},1,34); grid.RowSpacing = 5;
+            grid = uigridlayout(app.tabs.settings,[35 3]); grid.ColumnWidth = {260,'1x',90}; grid.Scrollable = 'on';
+            grid.RowHeight = [repmat({26},1,1),{'fit'},repmat({26},1,33)]; grid.RowSpacing = 5;
             app.section(grid,'Reconstruction (changes mark results out of date until the next Run Analysis)');
+            app.label(grid,'Homer GLM in this dataset');
+            app.homerGlmLabel = uilabel(grid,'Text','Open a dataset to read its Homer hmrR_GLM settings.','WordWrap','on');
+            app.homerGlmButton = uibutton(grid,'Text','Use these','Enable','off', ...
+                'Tooltip','Copy the dataset''s Homer GLM time range, gamma parameters, short-separation threshold and drift order into these settings.', ...
+                'ButtonPushedFcn',@(~,~)app.controller.perform(@()app.controller.applyHomerGlm()));
             app.label(grid,'Temporal convention');
             app.settings.temporalMode = uidropdown(grid,'Items',{'Professor original','Duration based (previous GUI)'}, ...
                 'ItemsData',{'professorOriginal','durationBased'},'Value','professorOriginal', ...
