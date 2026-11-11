@@ -13,8 +13,10 @@ function handles = plotRoi(ax, surface, rois, showNonRoi)
     nonColors = [0.9 0.7 0.45;0.4 0.8 0.9];
     for index = 1:numel(rois)
         points = surface.vertices(rois(index).indices,[2 1 3]);
-        handles.roi(index) = plot3(ax,points(:,1),points(:,2),points(:,3),'.', ...
-            'Color',colors(index,:),'MarkerSize',10,'DisplayName',char(rois(index).label));
+        if ~isempty(points)
+            handles.roi(index) = plot3(ax,points(:,1),points(:,2),points(:,3),'.', ...
+                'Color',colors(index,:),'MarkerSize',10,'DisplayName',char(rois(index).label));
+        end
         if showNonRoi && ~isempty(rois(index).nonRoiIndices)
             points = surface.vertices(rois(index).nonRoiIndices,[2 1 3]);
             handles.nonRoi(index) = plot3(ax,points(:,1),points(:,2),points(:,3),'.', ...

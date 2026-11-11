@@ -57,6 +57,12 @@ function testSingleAndComparisonRenderWithoutAccumulation(t)
     verifyEqual(t,numel(findall(left,'Type','line')),4);
     verifyEmpty(t,findall(right,'Type','patch')); drawnow;
 end
+function testEmptyThresholdSelectionRenders(t)
+    surface=smallSurface();roi=ssdot.io.roiFromIndices(surface,[],[],'empty selection');
+    fig=figure('Visible','off');t.addTeardown(@()delete(fig));ax=axes(fig);
+    handles=ssdot.viz.plotRoi(ax,surface,roi);
+    verifyTrue(t,isgraphics(handles.surface));verifyFalse(t,isgraphics(handles.roi(1)));
+end
 function testLegacyAssociationAndCanonicalRoundTrip(t)
     surface = smallSurface();
     fixture = t.applyFixture(matlab.unittest.fixtures.TemporaryFolderFixture);
