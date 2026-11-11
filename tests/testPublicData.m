@@ -4,10 +4,12 @@ end
 function setupOnce(t)
     root = fileparts(fileparts(mfilename('fullpath'))); addpath(fullfile(root,'src')); ssdot.app.initializeEnvironment();
     t.TestData.root = root;
-    t.TestData.dataRoot = string(getenv('SSDOT_PUBLIC_DATA_ROOT'));
+    % Same location rule as the validation workflow: SSDOT_PUBLIC_DATA_ROOT, else the shared temporary cache.
+    % Files are checked against pinned checksums below; nothing is downloaded or modified.
+    t.TestData.dataRoot = string(ssdot.validation.defaultOptions().publicDataRoot);
     t.TestData.manifest = jsondecode(fileread(fullfile(root,'tests','fixtures','publicDataManifest.json')));
     assumeTrue(t,strlength(t.TestData.dataRoot)>0 && isfolder(t.TestData.dataRoot), ...
-        'Set SSDOT_PUBLIC_DATA_ROOT to the verified files pinned in tests/fixtures/publicDataManifest.json. Public tests were not executed.');
+        "Public files not found at "+t.TestData.dataRoot+". Set SSDOT_PUBLIC_DATA_ROOT to the verified files pinned in tests/fixtures/publicDataManifest.json. Public tests were not executed.");
 end
 function testVerifiedRealRecordingsAndPreprocessing(t)
     entries = t.TestData.manifest.files;

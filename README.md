@@ -125,7 +125,7 @@ assertSuccess(results);
 assert(all([results.Passed]));
 ```
 
-Some tests require external recordings listed in [publicDataManifest.json](tests/fixtures/publicDataManifest.json). Set `SSDOT_PUBLIC_DATA_ROOT` to their local directory. GPU tests require the corresponding toolbox and hardware. The full-resolution workflow test is reported as not executed when the memory preflight finds too little free RAM. GUI tests replace `app.controller.chooser` instead of driving native file dialogs.
+Some tests require external recordings listed in [publicDataManifest.json](tests/fixtures/publicDataManifest.json); they are read from `SSDOT_PUBLIC_DATA_ROOT`, or from `ssdot-public-data-audit` in the temporary folder, and verified by checksum. GPU tests require the corresponding toolbox and hardware. The full-resolution workflow test is reported as not executed when the memory preflight finds too little free RAM. GUI tests replace `app.controller.chooser` instead of driving native file dialogs.
 
 ## Reference and license
 
