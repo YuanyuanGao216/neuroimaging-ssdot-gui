@@ -818,9 +818,14 @@ classdef AppController < handle
             if startsWith(string(obj.app.scaleDropDown.Value),"Auto"), peak=max(abs(values)); if peak>0, limits=[-peak peak]; end; end
             ssdot.viz.plotReconstruction(obj.app.resultAxes,state.atlas,values,limits,string(obj.app.chromophoreDropDown.Value));
             profile=state.runProfile; if isfield(state.result,'provenance'), profile=string(state.result.provenance.profile); end
-            parameters=strtrim(sprintf('%.4g ',state.temporalBasis.gammaParameters));
+            % Averaged and restored results carry temporal provenance but no recomputable basis object.
+            mode="unrecorded"; parameters="";
+            source=[]; if isfield(state.result,'provenance'), source=state.result.provenance; end
+            if (isempty(source) || ~isfield(source,'temporalMode')) && isstruct(state.temporalBasis), source=state.temporalBasis; end
+            if isstruct(source) && isfield(source,'temporalMode'), mode=string(source.temporalMode); end
+            if isstruct(source) && isfield(source,'gammaParameters'), parameters=strtrim(sprintf('%.4g ',source.gammaParameters)); end
             obj.app.resultLabel.Text=sprintf('%s | %s | temporal %s | gamma [%s] s | condition %d | color range [%.3g, %.3g]. Display scaling preserves values.', ...
-                upper(profile),state.nodeName,state.temporalBasis.temporalMode,parameters,condition,limits(1),limits(2));
+                upper(profile),state.nodeName,mode,parameters,condition,limits(1),limits(2));
             preview=state.previewDerived || profile=="preview";
             if isfield(state.result,'provenance') && isfield(state.result.provenance,'preview'), preview=preview || state.result.provenance.preview; end
             if preview, obj.app.resultLabel.Text='COARSE SOFTWARE PREVIEW - '+string(obj.app.resultLabel.Text); end
