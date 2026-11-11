@@ -29,3 +29,13 @@ function testRetentionProtectsInputsExportsAndValidation(t)
     verifyEqual(t,report.removed,2); verifyTrue(t,all(cellfun(@isfile,{input,export,validation,unknown,previousVersion})));
     verifyFalse(t,isfile(owned)); verifyFalse(t,isfile(temporary));
 end
+function testEmptyLogsOfFinishedProcessesAreRemoved(t)
+    fixture=t.applyFixture(matlab.unittest.fixtures.TemporaryFolderFixture); paths=ssdot.app.runtimePaths(fixture.Folder);
+    finished=fullfile(paths.logs,'History_2147483000.log'); running=fullfile(paths.logs,sprintf('History_%d.log',feature('getpid')));
+    content=fullfile(paths.logs,'History_2147483001.log');
+    for name={finished,running}, fid=fopen(name{1},'w'); fclose(fid); end
+    writelines('kept',content);
+    ssdot.io.cleanRuntime(paths);
+    verifyFalse(t,isfile(finished)); verifyTrue(t,isfile(running),'The log of a running process stays.');
+    verifyTrue(t,isfile(content),'Recent logs with content stay.');
+end
