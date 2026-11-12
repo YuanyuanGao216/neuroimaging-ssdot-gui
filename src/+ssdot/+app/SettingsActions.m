@@ -60,6 +60,63 @@ classdef SettingsActions < handle
             controller.app.updateActions();
         end
 
+        function applyProcessing(obj, event)
+            %APPLYPROCESSING Take an edited processing parameter; invalid input is reverted.
+            controller = obj.controller;
+            assert(~controller.busy, 'SSDOT:Busy', 'Settings are locked during an analysis.');
+            workspace = controller.workspace;
+            target = controller.app.processingTable.UserData(event.Indices(1), :);
+            try
+                assert(target(2) > 0, 'SSDOT:ProcessingParameter', 'This processing step has no parameters.');
+                values = sscanf(char(string(event.NewData)), '%f')';
+                workspace.setProcessing(ssdot.homer.setParameter(workspace.processing, target(1), target(2), values));
+            catch exception
+                obj.refreshProcessing();
+                rethrow(exception);
+            end
+            obj.refreshProcessing();
+            call = workspace.processing.calls(target(1));
+            obj.changed(sprintf('Processing: %s %s set to %s', call.name, call.paramIn(target(2)).name, ...
+                strjoin(compose("%.15g", values), " ")));
+        end
+
+        function loadProcessing(obj, filename)
+            %LOADPROCESSING Use the processing steps of a Homer3 configuration file.
+            controller = obj.controller;
+            assert(~controller.busy, 'SSDOT:Busy', 'Settings are locked during an analysis.');
+            if nargin < 2
+                filename = controller.chooser.openFile({'*.cfg', 'Homer3 configuration'}, ...
+                    'Load Homer3 configuration', char(controller.workspace.datasetRoot));
+                if strlength(filename) == 0
+                    return;
+                end
+            end
+            controller.workspace.setProcessing(ssdot.homer.readProcessingStream(filename));
+            obj.refreshProcessing();
+            obj.changed("Processing steps loaded from " + string(filename));
+        end
+
+        function saveProcessing(obj, filename)
+            %SAVEPROCESSING Save the processing steps as a Homer3 configuration file.
+            controller = obj.controller;
+            if nargin < 2
+                filename = controller.chooser.saveFile({'*.cfg', 'Homer3 configuration'}, ...
+                    'Save as Homer3 configuration', fullfile(controller.environment.paths.root, 'processOpt_ssdot.cfg'));
+                if strlength(filename) == 0
+                    return;
+                end
+            end
+            ssdot.homer.writeConfiguration(filename, controller.workspace.processing);
+            controller.app.statusLabel.Text = char("Saved the processing steps to " + string(filename));
+            controller.log(controller.app.statusLabel.Text);
+        end
+
+        function refreshProcessing(obj)
+            %REFRESHPROCESSING Show the processing steps and what they apply to.
+            workspace = obj.controller.workspace;
+            obj.controller.app.refreshProcessing(workspace.processing, processingNote(workspace));
+        end
+
         function setAveragesEnabled(obj, enabled)
             %SETAVERAGESENABLED Averaging needs no reconstruction, so the choice applies immediately.
             controller = obj.controller;
@@ -192,6 +249,7 @@ classdef SettingsActions < handle
             workspace = obj.controller.workspace;
             app.refreshSettings(workspace.config);
             app.refreshRoiSettings(workspace.roiSettings);
+            obj.refreshProcessing();
             app.averageSetting.Value = workspace.averagesEnabled;
             app.deviceDropDown.Value = char(string(workspace.config.device));
         end
@@ -207,5 +265,23 @@ classdef SettingsActions < handle
             controller.app.renderActiveTab();
             controller.app.updateActions();
         end
+    end
+end
+
+function note = processingNote(workspace)
+    % What the processing steps apply to in the open dataset.
+    if isempty(workspace.runs)
+        note = "Recordings without Homer3 results, when a dataset is opened.";
+        return
+    end
+    processed = workspace.appProcessedRuns();
+    if isempty(processed)
+        note = "The open dataset holds Homer3 results, which are used as stored; these steps do not apply to it.";
+        return
+    end
+    note = sprintf("The %d recordings of the open dataset.", numel(processed));
+    previous = sum(arrayfun(@(run) string(run.procStream.text) ~= workspace.processing.text, processed));
+    if previous > 0
+        note = note + sprintf(" %d still use earlier steps until the next Run Analysis.", previous);
     end
 end

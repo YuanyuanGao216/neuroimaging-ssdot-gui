@@ -37,6 +37,17 @@ classdef AnalysisActions < handle
                 'Cancel stops at the next safe boundary.'], count), 'info');
             controller.log(sprintf('Run Analysis: %d recording(s), %s.', count, workspace.config.device));
 
+            % Recordings the app processes first get the Settings > Processing stream (cached when unchanged).
+            processed = workspace.appProcessedRuns();
+            if ~isempty(processed)
+                controller.app.stageLabel.Text = 'Processing recordings with Homer3';
+                updated = ssdot.homer.updateProcessing(processed, workspace.processing, ...
+                    @(label, done, total) obj.reportProgress(label, done, total));
+                if updated > 0
+                    controller.log(sprintf('Processed %d recording(s) with the Settings > Processing stream.', updated));
+                end
+            end
+
             outcomes = struct('name', {}, 'status', {}, 'message', {}, 'reused', {}, 'roiCounts', {});
             cancelled = false;
             for position = 1:count
@@ -163,6 +174,7 @@ classdef AnalysisActions < handle
             progress.recordingCount = 0;
             progress.currentStage = 0;
             obj.controller.overview.refresh(false);
+            obj.controller.settings.refreshProcessing();
             obj.controller.finishWork();
         end
 

@@ -105,8 +105,15 @@ classdef OverviewView < handle
                 model = "Missing model input(s): " + strjoin(report.missing, "; ");
             end
 
+            processing = "Recordings use the Homer3 results stored in the dataset.";
+            processed = workspace.appProcessedRuns();
+            if ~isempty(processed)
+                processing = "Recordings processed by the app with Homer3 (" + numel(workspace.processing.calls) + ...
+                    " steps; Settings > Processing).";
+            end
+
             text = "Dataset: " + workspace.datasetRoot + newline ...
-                + numel(workspace.runs) + " recording(s). " + model + newline ...
+                + numel(workspace.runs) + " recording(s). " + processing + " " + model + newline ...
                 + workspace.homerGlm.note + homerGlmDifference(workspace.homerGlm.glm, workspace.config);
         end
     end

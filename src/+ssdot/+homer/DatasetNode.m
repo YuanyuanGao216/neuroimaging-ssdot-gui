@@ -16,13 +16,14 @@ classdef DatasetNode < handle
         iRun = 0
         children = []
         CondNames = {}
-        % Recordings only: the SNIRF data (SnirfClass), its file and the processing results.
+        % Recordings only: the SNIRF data (SnirfClass), its file and where processing is cached.
         acquired = []
         file = ""
-        % Homer3 output (ProcResultClass), calls (FuncCallClass) and configuration file.
-        procStream = struct('output', [], 'fcalls', [], 'file', "")
-        % Recordings only: function that rereads and reprocesses this node.
-        reprocess = []
+        cacheFolder = ""
+        % Recordings only: Homer3 output (ProcResultClass), calls (FuncCallClass) and stream text.
+        procStream = struct('output', [], 'fcalls', [], 'text', "")
+        % Group only: Homer3 configuration files found in the dataset folder (not applied).
+        datasetConfigurations = strings(1, 0)
     end
 
     methods
@@ -35,10 +36,11 @@ classdef DatasetNode < handle
         end
 
         function status = Load(obj)
-            %LOAD Reread and reprocess a recording whose files changed; 0 on success, as in Homer3.
+            %LOAD Reread and reprocess a recording whose file changed; 0 on success, as in Homer3.
             status = 0;
-            if ~isempty(obj.reprocess)
-                obj.reprocess(obj);
+            if strcmp(obj.type, 'run')
+                obj.acquired = SnirfClass(char(obj.file));
+                ssdot.homer.updateProcessing(obj, ssdot.homer.parseStream(obj.procStream.text), [], true);
             end
         end
     end

@@ -1,18 +1,22 @@
-function group = loadDataset(folder, progress, cacheFolder)
+function group = loadDataset(folder, progress, cacheFolder, stream)
     %LOADDATASET Load a dataset without modifying its files.
     % A dataset processed in Homer3 (derivatives/homer/groupResults.mat) is read as stored. A folder
-    % of SNIRF recordings without Homer3 results is processed by the app with Homer3, cached in
-    % cacheFolder (default: the app's cache). Optional progress(message,completed,total).
+    % of SNIRF recordings without Homer3 results is processed by the app with Homer3 using stream
+    % (default: the app's default stream), cached in cacheFolder (default: the app's cache).
+    % Optional progress(message,completed,total).
     if nargin < 2
         progress = [];
     end
 
     filename = fullfile(folder, "derivatives", "homer", "groupResults.mat");
     if ~isfile(filename)
-        if nargin < 3
+        if nargin < 3 || isempty(cacheFolder)
             cacheFolder = ssdot.app.runtimePaths().cache;
         end
-        group = ssdot.homer.openDataset(folder, cacheFolder, progress);
+        if nargin < 4
+            stream = [];
+        end
+        group = ssdot.homer.openDataset(folder, cacheFolder, progress, stream);
         return
     end
     reportProgress(progress, "Reading groupResults.mat", 0, 0);

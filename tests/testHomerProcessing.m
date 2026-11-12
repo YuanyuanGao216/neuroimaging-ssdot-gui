@@ -57,11 +57,13 @@ function testFolderLayoutAndCache(t)
         mkdir(fileparts(target));
         copyfile(snirf, target);
     end
-    % A fast stream keeps the test short; layout and caching do not depend on it.
-    writelines(["% run", "@ hmrR_Intensity2OD dod (data", "@ hmrR_OD2Conc dc (dod,probe ppf %0.1f_%0.1f 6_6"], ...
-        fullfile(folder, 'fast.cfg'));
+    % A fast stream keeps the test short; layout and caching do not depend on it. A Homer3
+    % configuration in the folder is reported, not applied.
+    stream = ssdot.homer.parseStream(["@ hmrR_Intensity2OD dod (data"; ...
+        "@ hmrR_OD2Conc dc (dod,probe ppf %0.1f_%0.1f 6_6"]);
+    copyfile(fullfile(t.TestData.st001, 'processOpt_Gao.cfg'), fullfile(folder, 'lab.cfg'));
 
-    group = ssdot.homer.openDataset(folder, cache);
+    group = ssdot.homer.openDataset(folder, cache, [], stream);
 
     subjects = group.children;
     verifyEqual(t, string({subjects.name}), ["sub-01", "sub-02"]);
@@ -71,11 +73,42 @@ function testFolderLayoutAndCache(t)
     verifyEqual(t, [runs.iSubj; runs.iSess; runs.iRun], [1 2; 1 1; 1 1]);
     verifyTrue(t, all(arrayfun(@ssdot.io.isRecording, runs)));
     verifyEqual(t, runs(1).CondNames, {'1', '2'});
+    verifyEqual(t, group.datasetConfigurations, string(fullfile(folder, 'lab.cfg')));
+    verifyEqual(t, string(runs(1).procStream.text), stream.text);
     verifyEqual(t, numel(dir(fullfile(cache, 'ssdot-homer-v1-*.mat'))), 1, ...
         'Identical recordings share one cached result.');
 
-    reopened = ssdot.homer.openDataset(folder, cache);
+    reopened = ssdot.homer.openDataset(folder, cache, [], stream);
     first = reopened.children(1).children(1).children(1);
     verifyEqual(t, first.procStream.output.dc(1).dataTimeSeries, runs(1).procStream.output.dc(1).dataTimeSeries);
-    verifyEqual(t, ssdot.io.recordingFiles(folder, first), [string(first.file), fullfile(folder, "fast.cfg")]);
+    verifyEqual(t, ssdot.io.recordingFiles(folder, first), string(first.file));
+
+    % A changed stream reprocesses only when it differs.
+    verifyEqual(t, ssdot.homer.updateProcessing(runs, stream), 0);
+    changed = ssdot.homer.setParameter(stream, 2, 1, [5 5]);
+    verifyEqual(t, ssdot.homer.updateProcessing(runs, changed), 2);
+    expected = first.procStream.output.dc(1).dataTimeSeries * 6 / 5;
+    verifyEqual(t, runs(1).procStream.output.dc(1).dataTimeSeries, expected, ...
+        'AbsTol', 1e-12 * max(abs(expected), [], 'all'));
+end
+
+function testParametersAreEditedAtFullPrecisionAndSavedForHomer3(t)
+    stream = ssdot.homer.defaultStream();
+
+    edited = ssdot.homer.setParameter(stream, 3, 1, 0.995);
+
+    spline = edited.calls(3);
+    verifyEqual(t, spline.name, 'hmrR_MotionCorrectSplineSG');
+    verifyEqual(t, spline.paramIn(1).value, 0.995, 'Display format %0.2f must not round the value.');
+    verifyEqual(t, numel(edited.calls), numel(stream.calls));
+    verifyError(t, @() ssdot.homer.setParameter(stream, 1, 1, 5), 'SSDOT:ProcessingParameter');
+
+    % The other parameters of an edited step, including multi-value ones, are kept.
+    pruning = ssdot.homer.setParameter(stream, 1, 2, 4).calls(1);
+    verifyEqual(t, {pruning.paramIn.value}, {[0 1e7], 4, [5 45]});
+
+    file = string(tempname) + ".cfg";
+    t.addTeardown(@() delete(file));
+    ssdot.homer.writeConfiguration(file, edited);
+    verifyEqual(t, ssdot.homer.readProcessingStream(file).text, edited.text);
 end

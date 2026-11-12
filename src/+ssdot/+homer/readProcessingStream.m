@@ -1,9 +1,8 @@
 function stream = readProcessingStream(file)
-    %READPROCESSINGSTREAM The recording-level calls of a Homer3 processing configuration (.cfg).
+    %READPROCESSINGSTREAM The recording-level processing stream of a Homer3 configuration file (.cfg).
     % A Homer3 configuration lists "@ function outputs (inputs parameters" lines under the
     % headers "% group", "% subj", "% sess" and "% run"; only the "% run" section processes
-    % recordings. stream.calls holds those calls as Homer3 FuncCallClass objects, in order;
-    % stream.text is the section's text, which identifies the stream for caching.
+    % recordings, and only that section is returned (see parseStream).
     lines = strtrim(splitlines(string(fileread(file))));
     headers = find(ismember(lower(lines), ["% group", "% subj", "% sess", "% run"]));
     runHeader = headers(lower(lines(headers)) == "% run");
@@ -12,13 +11,5 @@ function stream = readProcessingStream(file)
 
     sectionEnd = min([headers(headers > runHeader); numel(lines) + 1]);
     section = lines(runHeader + 1:sectionEnd - 1);
-    callLines = section(startsWith(section, "@"));
-    assert(~isempty(callLines), 'SSDOT:ProcessingStream', ...
-        'The "%% run" section of %s has no function calls.', file);
-
-    calls = FuncCallClass.empty;
-    for index = 1:numel(callLines)
-        calls(index) = FuncCallClass(char(callLines(index)));
-    end
-    stream = struct('file', string(file), 'calls', calls, 'text', strjoin(callLines, newline));
+    stream = ssdot.homer.parseStream(strjoin(section(startsWith(section, "@")), newline));
 end

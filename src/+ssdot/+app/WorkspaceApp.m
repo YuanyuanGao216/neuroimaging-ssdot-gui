@@ -46,6 +46,10 @@ classdef WorkspaceApp < matlab.apps.AppBase
         modelNotice
         averageSetting
         settingsButtons
+        % Settings > Processing: the Homer3 steps, what they apply to, and configuration file buttons.
+        processingTable
+        processingNote
+        processingButtons
         settings = struct()
         roiSettings = struct()
         exportSettings = struct()
@@ -97,7 +101,8 @@ classdef WorkspaceApp < matlab.apps.AppBase
                 app.recordingDropDown, app.deviceDropDown, app.useCpuButton, ...
                 app.settingsButtons(1), app.settingsButtons(2), app.settingsButtons(3), ...
                 app.runButton, app.atlasPath, app.forwardPath, app.gpuButton, app.averageSetting, ...
-                app.recordingTable, app.modelInputButtons(1), app.modelInputButtons(2)};
+                app.recordingTable, app.modelInputButtons(1), app.modelInputButtons(2), ...
+                app.processingTable, app.processingButtons(1), app.processingButtons(2)};
 
             app.controller = ssdot.app.AppController(app, environment);
         end
@@ -273,6 +278,32 @@ classdef WorkspaceApp < matlab.apps.AppBase
                 end
                 config.(name) = value;
             end
+        end
+
+        function refreshProcessing(app, stream, note)
+            %REFRESHPROCESSING Show a processing stream: one row per parameter, or one per step without any.
+            rows = cell(0, 3);
+            indices = zeros(0, 2);
+            for callIndex = 1:numel(stream.calls)
+                call = stream.calls(callIndex);
+                if isempty(call.paramIn)
+                    rows(end + 1, :) = {call.name, '(none)', ''}; %#ok<AGROW>
+                    indices(end + 1, :) = [callIndex, 0]; %#ok<AGROW>
+                end
+                for parameterIndex = 1:numel(call.paramIn)
+                    parameter = call.paramIn(parameterIndex);
+                    step = '';
+                    if parameterIndex == 1
+                        step = call.name;
+                    end
+                    value = char(strjoin(compose("%.15g", double(parameter.value(:)')), " "));
+                    rows(end + 1, :) = {step, parameter.name, value}; %#ok<AGROW>
+                    indices(end + 1, :) = [callIndex, parameterIndex]; %#ok<AGROW>
+                end
+            end
+            app.processingTable.Data = rows;
+            app.processingTable.UserData = indices;
+            app.processingNote.Text = char(note);
         end
 
         function refreshRoiSettings(app, values)
@@ -582,13 +613,14 @@ classdef WorkspaceApp < matlab.apps.AppBase
 
         function makeSettings(app)
             % Components fill the three-column grid row by row in creation order: label, control, extra.
-            grid = uigridlayout(app.tabs.settings, [60 3]);
+            grid = uigridlayout(app.tabs.settings, [70 3]);
             grid.ColumnWidth = {260, '1x', 90};
             grid.Scrollable = 'on';
-            grid.RowHeight = [{26, 'fit'}, repmat({26}, 1, 58)];
+            grid.RowHeight = [{26, 'fit'}, repmat({26}, 1, 68)];
             grid.RowSpacing = 5;
 
             app.makeSettingsFileButtons(grid);
+            app.makeProcessingSettings(grid);
             app.makeReconstructionSettings(grid);
             app.makeAverageSettings(grid);
             app.makeModelInputSettings(grid);
@@ -615,6 +647,37 @@ classdef WorkspaceApp < matlab.apps.AppBase
                 uibutton(files, 'Text', 'Restore defaults', ...
                     'Tooltip', 'Return every setting to its default value.', ...
                     'ButtonPushedFcn', app.callback(@() app.controller.settings.restoreDefaults()))];
+            addSpacer(grid);
+        end
+
+        function makeProcessingSettings(app, grid)
+            addSection(grid, 'Processing (SNIRF recordings without Homer3 results; applied by the next Run Analysis)');
+
+            addLabel(grid, 'Applies to');
+            app.processingNote = uilabel(grid, 'Text', '', 'WordWrap', 'on');
+            addSpacer(grid);
+
+            addLabel(grid, 'Homer3 processing steps, in order');
+            app.processingTable = uitable(grid, 'ColumnName', {'Step', 'Parameter', 'Value'}, ...
+                'ColumnEditable', [false false true], 'ColumnWidth', {230, 130, 'auto'}, 'RowName', {}, ...
+                'Tooltip', ['Homer3 functions run on every recording. Edit a value (numbers separated by ' ...
+                'spaces); changes mark results out of date until the next Run Analysis.'], ...
+                'CellEditCallback', ...
+                @(~, event) app.controller.perform(@() app.controller.settings.applyProcessing(event)));
+            grid.RowHeight{app.processingTable.Layout.Row} = 300;
+            addSpacer(grid);
+
+            addLabel(grid, 'Homer3 configuration file (.cfg)');
+            files = uigridlayout(grid, [1 3]);
+            files.ColumnWidth = {200, 200, '1x'};
+            files.Padding = [0 0 0 0];
+            app.processingButtons = [ ...
+                uibutton(files, 'Text', 'Load Homer3 configuration...', ...
+                    'Tooltip', 'Use the processing steps of a Homer3 configuration file, such as a lab''s processOpt file.', ...
+                    'ButtonPushedFcn', app.callback(@() app.controller.settings.loadProcessing())), ...
+                uibutton(files, 'Text', 'Save as Homer3 configuration...', ...
+                    'Tooltip', 'Save these processing steps as a configuration file Homer3 can use.', ...
+                    'ButtonPushedFcn', app.callback(@() app.controller.settings.saveProcessing()))];
             addSpacer(grid);
         end
 

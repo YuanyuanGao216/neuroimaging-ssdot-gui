@@ -15,6 +15,8 @@ classdef Workspace < handle
         averages = ssdot.app.ReconstructionState.empty
         % Settings applied to each recording by the next Run Analysis.
         config
+        % Homer3 processing stream for recordings the app processes (Settings > Processing).
+        processing
         roiSettings = ssdot.app.defaultRoiSettings()
         averagesEnabled = true
         atlasFile = ""
@@ -37,6 +39,7 @@ classdef Workspace < handle
         function obj = Workspace(environment)
             obj.environment = environment;
             obj.config = ssdot.app.defaultConfig();
+            obj.processing = ssdot.homer.defaultStream();
             obj.sharedCache = ssdot.io.SharedCache();
             obj.stateMap = containers.Map('KeyType', 'char', 'ValueType', 'any');
         end
@@ -113,8 +116,10 @@ classdef Workspace < handle
 
         function current = isCurrent(obj, state)
             %ISCURRENT True when the result was computed with the workspace settings and model inputs.
+            % A recording processed by the app must also have used the current processing stream.
             current = ~isempty(state.result) && ...
                 ssdot.app.sameConfig(state.config, obj.config) && ...
+                (strlength(state.processing) == 0 || state.processing == obj.processing.text) && ...
                 string(state.atlasFile) == string(obj.atlasFile) && ...
                 string(state.forwardFolder) == string(obj.forwardFolder);
         end
@@ -178,6 +183,16 @@ classdef Workspace < handle
             state.forwardFolder = obj.forwardFolder;
         end
 
+        function runs = appProcessedRuns(obj)
+            %APPPROCESSEDRUNS Recordings the app processes with Homer3 (no stored Homer3 results).
+            runs = ssdot.homer.DatasetNode.empty;
+            for node = obj.runs
+                if isa(node, 'ssdot.homer.DatasetNode')
+                    runs(end + 1) = node; %#ok<AGROW>
+                end
+            end
+        end
+
         function markNotRun(obj, nodes)
             %MARKNOTRUN Explain why recordings left by a cancelled analysis have no current result.
             for node = nodes
@@ -194,6 +209,10 @@ classdef Workspace < handle
             obj.config = config;
         end
 
+        function setProcessing(obj, stream)
+            obj.processing = ssdot.homer.parseStream(stream.text);
+        end
+
         function setRoiSettings(obj, settings)
             obj.roiSettings = ssdot.app.validateRoiSettings(settings);
         end
@@ -202,13 +221,15 @@ classdef Workspace < handle
             device = obj.config.device; % A hardware choice, not a setting default.
             obj.config = ssdot.app.defaultConfig();
             obj.config.device = device;
+            obj.processing = ssdot.homer.defaultStream();
             obj.roiSettings = ssdot.app.defaultRoiSettings();
             obj.averagesEnabled = true;
         end
 
         function writeSettings(obj, filename)
             ssdotSettings = struct('schemaVersion', 1, 'config', ssdot.app.scientificConfig(obj.config), ... %#ok<NASGU>
-                'roiSettings', obj.roiSettings, 'averagesEnabled', obj.averagesEnabled);
+                'roiSettings', obj.roiSettings, 'averagesEnabled', obj.averagesEnabled, ...
+                'processing', obj.processing.text);
             save(filename, 'ssdotSettings');
         end
 
@@ -224,8 +245,14 @@ classdef Workspace < handle
             config = ssdot.app.completeConfig(saved.config);
             ssdot.app.validateConfig(config);
             roiSettings = ssdot.app.validateRoiSettings(saved.roiSettings);
+            % Files saved before Processing existed use the default stream.
+            processing = ssdot.homer.defaultStream();
+            if isfield(saved, 'processing')
+                processing = ssdot.homer.parseStream(saved.processing);
+            end
 
             obj.config = config;
+            obj.processing = processing;
             obj.roiSettings = roiSettings;
             obj.averagesEnabled = logical(saved.averagesEnabled);
         end

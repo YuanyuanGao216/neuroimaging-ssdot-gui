@@ -77,6 +77,10 @@ classdef AnalysisPipeline < handle
                 workspace.cacheStatistics.recordingReloads = workspace.cacheStatistics.recordingReloads + 1;
             end
             state.sourceIdentity = sourceIdentity;
+            state.processing = "";
+            if isa(state.node, 'ssdot.homer.DatasetNode')
+                state.processing = string(state.node.procStream.text);
+            end
 
             inputs = ssdot.io.checkWorkflowInputs(workspace.datasetRoot, state.node, state.atlasFile, ...
                 state.forwardFolder, workspace.sharedCache);

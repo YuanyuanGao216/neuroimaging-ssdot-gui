@@ -41,7 +41,7 @@ classdef DatasetActions < handle
             % A failed or cancelled read leaves the previously opened dataset in place.
             try
                 group = ssdot.io.loadDataset(folder, @(message, done, total) obj.reportRead(message, done, total), ...
-                    controller.environment.paths.cache);
+                    controller.environment.paths.cache, controller.workspace.processing);
             catch exception
                 outcome = 'Opening failed.';
                 if strcmp(exception.identifier, 'SSDOT:Cancelled')
@@ -63,7 +63,9 @@ classdef DatasetActions < handle
             end
             app.statusLabel.Text = sprintf(['Opened %d recordings. ' ...
                 'Review Overview and Settings, then press Run Analysis.'], count);
-            app.setBanner(sprintf('Dataset opened: %d recordings. Nothing has been computed yet.', count), 'info');
+            note = obj.reportProcessing(group);
+            app.setBanner(sprintf('Dataset opened: %d recordings. No reconstruction has been run yet. %s', ...
+                count, note), 'info');
             controller.overview.refresh(false);
             app.showTab('overview');
             app.updateActions();
@@ -164,6 +166,7 @@ classdef DatasetActions < handle
             controller.displayedState = [];
 
             workspace.open(folder, group);
+            controller.settings.refreshProcessing();
             for line = [workspace.homerGlm.perRecording; workspace.homerGlm.note]'
                 controller.log(line);
             end
@@ -179,6 +182,25 @@ classdef DatasetActions < handle
             app.stageLabel.Text = 'No analysis running.';
             controller.log("Opened " + folder + " (" + numel(workspace.runs) + " recordings); " + ...
                 "source files are read-only.");
+        end
+
+        function note = reportProcessing(obj, group)
+            %REPORTPROCESSING Log how the recordings were processed; note names an unused Homer3 configuration.
+            controller = obj.controller;
+            note = "";
+            if ~isa(group, 'ssdot.homer.DatasetNode')
+                controller.log('Recordings use the Homer3 results stored in the dataset.');
+                return;
+            end
+            controller.log('Recordings processed with Homer3 using Settings > Processing.');
+            configurations = group.datasetConfigurations;
+            if ~isempty(configurations)
+                [~, names, extensions] = fileparts(configurations);
+                note = "The folder has a Homer3 configuration (" + strjoin(names + extensions, ", ") + ...
+                    "); recordings were processed with Settings > Processing, where Load Homer3 " + ...
+                    "configuration... applies it.";
+                controller.log(note);
+            end
         end
 
         function reportRead(obj, message, done, total)

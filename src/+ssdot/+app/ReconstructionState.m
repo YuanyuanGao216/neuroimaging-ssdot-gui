@@ -26,6 +26,8 @@ classdef ReconstructionState < handle
         spatialKey = ""
         lastAccess = 0
         reconstructionCount = 0
+        % Homer3 stream text the app processed this recording with; empty for stored Homer3 results.
+        processing = ""
         % "analysis", "session" or "average": how the current result was obtained.
         origin = "analysis"
         % Brain-mask vertex indices of the result's sensitivity; needed to recompute ROIs.
