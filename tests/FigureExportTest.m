@@ -52,6 +52,21 @@ classdef FigureExportTest < matlab.unittest.TestCase
             report=ssdot.viz.exportFigures(data,side,options); t.verifyNumElements(report.files,3);
             t.verifyEqual(data.rois,[a b]);
         end
+        function averagesExportTAndPMapsWithChosenSignificance(t)
+            fixture=t.applyFixture(matlab.unittest.fixtures.TemporaryFolderFixture);
+            [data,options]=FigureExportTest.smallData(); options.formats="fig"; options.significance=0.01;
+            data.result.statistics=ssdot.recon.groupStatistics(struct('hbo',{data.result.hbo,3*data.result.hbo}, ...
+                'hbr',{data.result.hbr,data.result.hbr}));
+            report=ssdot.viz.exportFigures(data,fixture.Folder,options);
+            t.verifyEqual(sort(string({report.files.name}))',sort(["hbo_condition-001.fig";"hbr_condition-001.fig"; ...
+                "hbo-tvalue_condition-001.fig";"hbo-pvalue_condition-001.fig";"hbr-tvalue_condition-001.fig";"hbr-pvalue_condition-001.fig"]));
+            fig=openfig(fullfile(fixture.Folder,'hbo-tvalue_condition-001.fig'),'invisible'); t.addTeardown(@()delete(fig));
+            patches=findall(fig,'Type','patch'); t.verifyEqual(patches(1).FaceVertexCData,data.result.statistics.hbo.t,'RelTol',1e-12);
+            pItem=report.files(string({report.files.name})=="hbo-pvalue_condition-001.fig");
+            t.verifyEqual(pItem.colorLimits,[0 0.01*256/255],'AbsTol',1e-15);
+            undefined=report.files(string({report.files.name})=="hbr-tvalue_condition-001.fig");
+            t.verifyEqual(undefined.colorLimits,[-1 1],'Undefined t (no variation) is shown neutral.');
+        end
     end
     methods (Static,Access=private)
         function [data,options]=smallData()

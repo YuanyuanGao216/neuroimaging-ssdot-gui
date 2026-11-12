@@ -21,10 +21,13 @@ function sensitivity = prepareSensitivity(model, mask, config)
         "channels", channels, "shortSepChLst", short, "E", E);
     brain = model.brain;
     scalp = model.scalp;
+    damping = 0.1; % Published normalization factor.
+    if isfield(config, "normalizationDamping"), damping = config.normalizationDamping; end
     if config.spatialRegularization
-        if isempty(model.cached)
-            [brain, brainScaling] = normalizeSensitivity(brain);
-            [scalp, scalpScaling] = normalizeSensitivity(scalp);
+        % Precomputed normalized files were made with the published factor only.
+        if isempty(model.cached) || damping ~= 0.1
+            [brain, brainScaling] = normalizeSensitivity(brain, damping);
+            [scalp, scalpScaling] = normalizeSensitivity(scalp, damping);
         else
             brain = model.cached.brain;
             scalp = model.cached.scalp;
@@ -36,16 +39,18 @@ function sensitivity = prepareSensitivity(model, mask, config)
     end
     sensitivity.Adot = brain(channels, :, :);
     sensitivity.Adot_scalp = scalp(channels, :, :);
-    sensitivity.M = ssdot.recon.buildSensitivityMask(config.sensitivityThreshold, model.brain, model.scalp);
+    scalpThreshold = config.sensitivityThreshold;
+    if isfield(config, "scalpSensitivityThreshold"), scalpThreshold = config.scalpSensitivityThreshold; end
+    sensitivity.M = ssdot.recon.buildSensitivityMask(config.sensitivityThreshold, model.brain, model.scalp, scalpThreshold);
     sensitivity.A = ssdot.recon.buildForwardMatrix(sensitivity.Adot, sensitivity.Adot_scalp, E, sensitivity.M);
 end
 
-function [values, scaling] = normalizeSensitivity(values)
-    % Keep the original factor 0.1 and last-wavelength scaling convention.
+function [values, scaling] = normalizeSensitivity(values, damping)
+    % Original convention: damping factor (published value 0.1) and last-wavelength scaling.
     for wavelength = 1:size(values, 3)
         A = squeeze(values(:, :, wavelength));
         diagonal = sum(A.^2, 1);
-        scaling = sqrt(diagonal + 0.1 * max(diagonal));
+        scaling = sqrt(diagonal + damping * max(diagonal));
         values(:, :, wavelength) = bsxfun(@rdivide, A, scaling);
     end
 end

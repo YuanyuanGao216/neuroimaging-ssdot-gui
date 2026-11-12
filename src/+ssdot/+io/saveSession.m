@@ -24,6 +24,7 @@ function saveSession(filename, state, automaticRois)
         % Normal/design matrices are recomputed, not persisted as opaque cache state.
         ssdotSession.result = struct('hbo',state.result.hbo,'hbr',state.result.hbr);
         if isfield(state.result,'provenance'), ssdotSession.result.provenance=state.result.provenance; end
+        if isfield(state.result,'statistics') && ~isempty(state.result.statistics), ssdotSession.result.statistics=state.result.statistics; end
     end
     save(filename,'ssdotSession','-v7.3');
 end

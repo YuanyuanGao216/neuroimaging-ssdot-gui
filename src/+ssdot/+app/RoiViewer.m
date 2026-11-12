@@ -206,8 +206,8 @@ classdef RoiViewer < handle
                 summary = string(sprintf('%s: %d ROI and %d non-ROI vertices.',roi.label,numel(roi.indices),numel(roi.nonRoiIndices)));
             end
             if isfield(roi.source,'upperThreshold')
-                summary = summary+sprintf(' Thresholds: fraction %.4g, non-ROI %.4g, exclusion %.4g.', ...
-                    roi.source.upperThreshold,roi.source.lowerThreshold,roi.source.exclusionDistance);
+                summary = summary+sprintf(' Rule: %s; fraction %.4g, non-ROI %.4g, exclusion %.4g.', ...
+                    roi.source.kind,roi.source.upperThreshold,roi.source.lowerThreshold,roi.source.exclusionDistance);
             end
             obj.status.Text = char(strjoin([string(summary),notes],newline));
         end

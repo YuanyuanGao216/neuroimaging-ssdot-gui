@@ -16,7 +16,7 @@ function observations = buildObservations(recording,S,probe,T,config)
     distance=sqrt(sum((SD.SrcPos(ml(:,1),:)-SD.DetPos(ml(:,2),:)).^2,2));
     short=find(active & SD.MeasListAct(1:nPairs)==1 & distance<config.shortSeparationThreshold);
     assert(~isempty(short),'SSDOT:NoShortChannels', ...
-        'No active short-separation channels remain below 22 mm. Check channel pruning and probe geometry.');
+        'No active short-separation channels remain below %g mm. Check channel pruning and probe geometry.',config.shortSeparationThreshold);
     nLong=numel(channels);
     short1=mean(OD(:,short),2); short2=mean(OD(:,nPairs+short),2);
     SS1=kron(sparse(short1),speye(nLong));

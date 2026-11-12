@@ -22,20 +22,21 @@ app = main();              % equivalent to main("gui")
 ```
 
 1. Click **Open dataset...** and select the included `ST001` folder or another compatible dataset. Opening reads the stored Homer results and shows an **Overview** of recordings, durations, channels, wavelengths, conditions and model files. Nothing is computed.
-2. Optionally review **Settings** and choose the profile, compute device and whether to run all recordings or only the shown one.
-3. Press **Run Analysis**. For each recording it checks the inputs, prepares sensitivity, temporal and spatial bases, reconstructs HbO/HbR and calculates the ROI for every condition. Progress and the current step are shown in the Analysis panel; **Cancel** stops at the next safe boundary and keeps completed recordings.
-4. Explore **Results** (HbO/HbR maps), **ROI**, **Signals**, **Model** and **Average**. Selecting a recording or condition only changes the display.
+2. Optionally review **Settings** and the compute device. Settings are remembered between sessions; **Save settings...** and **Load settings...** keep named configurations, and **Restore defaults** resets them.
+3. Press **Run Analysis**. For each recording it checks the inputs, prepares sensitivity, temporal and spatial bases, reconstructs HbO/HbR and calculates the ROI for every condition. It then averages the results, with T and P values (see below). Progress and the current step are shown in the Analysis panel; **Cancel** stops at the next safe boundary and keeps completed recordings.
+4. Choose a recording or an average in **Shown** and explore **Results** (HbO/HbR, T and P maps), **ROI**, **Signals** and **Model**. Changing what is shown only changes the display.
 
 | Tab | Contents |
 | --- | --- |
 | Overview | Dataset summary, model-input readiness and the status of each recording |
 | Signals | Stored raw intensity and optical density, with stored averages when available |
-| Results | HbO/HbR maps by condition, with provenance and a fixed, automatic or custom symmetric color range (display only) |
+| Results | HbO/HbR maps by condition, with provenance and a fixed, automatic or custom symmetric color range (display only); for averages, **Map** also offers T and P values |
 | ROI | Automatic ROIs from Run Analysis, imported ROIs, comparisons and coordinate distances |
 | Model | Registered probe, sensitivity, kernel centers, the single temporal basis and the convolved temporal design over the whole recording |
-| Average | Arithmetic mean of completed recordings with matching settings |
-| Settings | Reconstruction parameters, the dataset's Homer GLM timing, model-input locations, ROI thresholds and figure export options |
+| Settings | Reconstruction parameters, the dataset's Homer GLM timing, averages, model-input locations, ROI thresholds and figure export options |
 | Log | Stage timings, activity log, technical error details and GPU check |
+
+After the recordings, Run Analysis averages current results at every level with two or more members: a session averages its recordings, a subject its sessions and the group its subjects. A level with one member passes it on unchanged. Each average appears in the **Shown** list, for example `Average: sess01 (3 recordings)`. It also holds a per-vertex one-sample t-test of the reconstructed change against zero across its members (t = mean / (SD / sqrt(n)), df = n - 1, two-sided); choose **Map > T value** or **P value** in Results. Conditions are matched by name; a condition missing from any member is left out and named in the result description. Averaging needs no reconstruction and can be switched off under **Settings > Averages**. The P map colors vertices below the chosen significance level (default 0.05) and shows the rest in gray. P values can be shown uncorrected, FDR-adjusted (Benjamini-Hochberg) or Bonferroni-adjusted across the vertices of the map. Vertices whose values are identical in every recording have no defined t and are shown as neutral. The statistics are saved in sessions and exported with the maps.
 
 Settings apply to the whole workspace. Changing them never discards results: existing results are marked **Out of date** until the next Run Analysis, which reuses every result whose inputs and settings are unchanged. ROI thresholds can be changed after a run; **Update ROIs** recalculates them from existing results without repeating the reconstruction. An empty ROI (no vertex above the threshold) is a valid outcome and is reported as such.
 
@@ -63,21 +64,28 @@ Use `SSDOT_DATA_ROOT` to change the default dataset browser location. Atlas and 
 
 ## Reconstruction
 
-**Research** uses full configured resolution. The optional coarse **Preview** profile is intended for diagnostics. Scientific parameters remain explicit and should be selected for the acquisition and study.
+Scientific parameters remain explicit and should be selected for the acquisition and study.
 
-The reconstruction backend uses exact temporal QR compression to avoid materializing the expanded design matrix. It retains double precision and the configured regularization objective without reducing spatial resolution. A dense reference backend is also available.
+The reconstruction backend uses exact temporal QR compression to avoid materializing the expanded design matrix. It retains double precision and the configured regularization objective without reducing spatial resolution.
 
-Opening a dataset also reads the `hmrR_GLM` call stored in its Homer processing stream (time range, basis type, gamma parameters, short-separation threshold and drift order) and reports where it differs from the current settings. It is never applied automatically; **Settings > Use these** copies it into the workspace settings. Only the modified gamma basis (`idxBasis` 2) is supported by the reconstruction.
+Opening a dataset also reads the `hmrR_GLM` call stored in its Homer processing stream (time range, basis type, gamma parameters, short-separation threshold and drift order) and reports where it differs from the current settings. It is never applied automatically. Only the modified gamma basis (`idxBasis` 2) is supported by the reconstruction. The reconstruction always regresses the average of all short channels; if Homer used a different short-channel method, the Overview says so.
 
-The default `professorOriginal` temporal mode uses onset impulses and configured-duration gamma smoothing. `durationBased` provides event-duration spreading as an alternative. Recorded event durations remain unchanged. Current defaults are defined in [defaultConfig.m](src/+ssdot/+app/defaultConfig.m); temporal compatibility does not imply that every application setting matches the original paper's protocol.
+The temporal design uses onset impulses and configured-duration gamma smoothing. Results in older sessions computed with event-duration spreading are labelled as such. Recorded event durations remain unchanged. Current defaults are defined in [defaultConfig.m](src/+ssdot/+app/defaultConfig.m); temporal compatibility does not imply that every application setting matches the original paper's protocol.
+
+Every reconstruction value is a Settings field, and each default reproduces the original implementation:
+- separate brain and scalp log10 sensitivity mask thresholds (both -2);
+- the damping factor of the optional spatial normalization (0.1);
+- the time point at which maps are taken. The default samples both chromophores at the HbO basis peak; the alternative takes HbR at its own peak.
+
+Sessions saved before a setting existed are opened with that setting's default, which is the behaviour they were computed with.
 
 ## ROI and exports
 
-Run Analysis calculates one automatic ROI per condition with the existing `findRoi` rule on HbO: vertices above a fraction of the peak over the whole forward mesh that also lie in the brain sensitivity mask, plus a separate non-ROI set below a second fraction and outside an exclusion distance. The ROI viewer also supports imported ROIs and compatible side-by-side or overlay comparisons. ROIs belong to a specific mesh; forward-model and full-pial indices are not interchangeable. Coordinate distances use the selected mesh's frame and units.
+Run Analysis calculates one automatic ROI per condition with the existing `findRoi` rule on the HbO increase (or, if chosen in Settings, the HbR decrease): vertices above a fraction of the peak over the whole forward mesh that also lie in the brain sensitivity mask, plus a separate non-ROI set below a second fraction and outside an exclusion distance. The ROI viewer also supports imported ROIs and compatible side-by-side or overlay comparisons. ROIs belong to a specific mesh; forward-model and full-pial indices are not interchangeable. Coordinate distances use the selected mesh's frame and units.
 
-**Export figures...** saves available maps, temporal bases, kernel centers and ROI views. PNG is the default; PDF and editable MATLAB FIG formats are available under **Settings > Figure export**. Raw/OD and probe/sensitivity views are optional. Exports use a new destination subfolder, never overwrite files and preserve the underlying numerical values. **Save session...** stores the shown recording's result, settings and ROIs; **Open session...** restores it for the matching recording and adopts its settings.
+**Export figures...** saves available maps, temporal bases, kernel centers and ROI views. PNG is the default; PDF and editable MATLAB FIG formats, resolution and figure size are set under **Settings > Figure export**. Exports use the color scale, colormap, P-value correction and non-ROI display currently chosen in the Results and ROI tabs. Raw/OD and probe/sensitivity views are optional. Exports use a new destination subfolder, never overwrite files and preserve the underlying numerical values. **Save session...** stores the shown recording's result, settings and ROIs; **Open session...** restores it for the matching recording and adopts its settings.
 
-Generated caches, logs, reports and sessions are stored under ignored `results/`. Owned caches, temporary files and inactive logs have cleanup policies; deliberate exports, saved sessions and scientific reports are retained. Original dataset files are not modified.
+Generated caches, logs, reports and sessions are stored under ignored `results/`. Owned caches, temporary files and inactive logs have cleanup policies (empty logs of finished sessions are removed at startup); deliberate exports, saved sessions and scientific reports are retained. Original dataset files are not modified.
 
 ## Architecture
 

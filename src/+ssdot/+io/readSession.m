@@ -35,12 +35,20 @@ function session = readSession(filename)
     else
         error('SSDOT:SessionFormat','Expected a versioned ssdotSession.');
     end
+    % Settings added after the session was saved take the values that applied then.
+    session.config = ssdot.app.completeConfig(session.config);
     if ~isempty(session.surface)
         ssdot.viz.validateSurface(session.surface);
         if ~isempty(session.result)
             assert(size(session.result.hbo,1)==size(session.surface.vertices,1) && ...
                 isequal(size(session.result.hbo),size(session.result.hbr)), ...
                 'SSDOT:ResultSize','Saved result dimensions do not match the saved mesh.');
+            if isfield(session.result,'statistics') && ~isempty(session.result.statistics)
+                stats = session.result.statistics;
+                assert(all(isfield(stats,{'recordings','degreesOfFreedom','hbo','hbr'})) && ...
+                    isequal(size(stats.hbo.t),size(session.result.hbo),size(stats.hbo.p),size(stats.hbr.t),size(stats.hbr.p)), ...
+                    'SSDOT:ResultSize','Saved T/P values do not match the saved result.');
+            end
         end
     end
 end

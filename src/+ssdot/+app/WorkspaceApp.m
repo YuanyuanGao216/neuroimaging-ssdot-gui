@@ -12,8 +12,6 @@ classdef WorkspaceApp < matlab.apps.AppBase
         exportButton
         % Analysis panel
         recordingDropDown
-        scopeDropDown
-        profileDropDown
         deviceDropDown
         useCpuButton
         runButton
@@ -33,10 +31,12 @@ classdef WorkspaceApp < matlab.apps.AppBase
         signals
         conditionDropDown
         chromophoreDropDown
+        mapDropDown
+        significanceField
+        correctionDropDown
+        colormapDropDown
         scaleDropDown
         colorLimitField
-        homerGlmLabel
-        homerGlmButton
         resultLabel
         resultAxes
         roiHost
@@ -45,10 +45,8 @@ classdef WorkspaceApp < matlab.apps.AppBase
         modelMode
         modelButton
         modelNotice
-        modelAxes
-        averageNode
-        averageHost
-        averageViewer = []
+        averageSetting
+        settingsButtons
         settings = struct()
         roiSettings = struct()
         exportSettings = struct()
@@ -60,8 +58,16 @@ classdef WorkspaceApp < matlab.apps.AppBase
         diagnosticText
         gpuButton
     end
+    properties (Dependent)
+        % Created when first drawn: plot axes are the slowest components to build.
+        modelAxes
+    end
     properties (Access=private)
         inputControls = {}
+        modelGrid
+        modelAxesStore = []
+        signalGrid
+        signalAxesStore = []
     end
     methods
         function app = WorkspaceApp(environment)
@@ -76,15 +82,15 @@ classdef WorkspaceApp < matlab.apps.AppBase
             main = uigridlayout(body,[2 1]); main.RowHeight = {'fit','1x'}; main.Padding = [0 0 0 0]; main.RowSpacing = 4;
             app.banner = uilabel(main,'Text','','WordWrap','on','FontWeight','bold');
             app.tabGroup = uitabgroup(main,'SelectionChangedFcn',@(~,~)app.onTabChanged());
-            names = {'Overview','Signals','Results','ROI','Model','Average','Settings','Log'};
-            keys = {'overview','signals','results','roi','model','average','settings','log'};
+            names = {'Overview','Signals','Results','ROI','Model','Settings','Log'};
+            keys = {'overview','signals','results','roi','model','settings','log'};
             for index = 1:numel(keys), app.tabs.(keys{index}) = uitab(app.tabGroup,'Title',names{index}); end
             app.makeOverview(); app.makeSignals(); app.makeResults(); app.makeRoi(); app.makeModel();
-            app.makeAverage(); app.makeSettings(); app.makeLog();
+            app.makeSettings(); app.makeLog();
             app.statusLabel = uilabel(root,'Text','Open a dataset to begin.');
             app.inputControls = {app.loadButton,app.openSessionButton,app.saveSessionButton,app.exportButton, ...
-                app.recordingDropDown,app.scopeDropDown,app.profileDropDown,app.deviceDropDown,app.useCpuButton, ...
-                app.runButton,app.atlasPath,app.forwardPath,app.modelButton,app.gpuButton,app.averageNode,app.recordingTable,app.homerGlmButton};
+                app.recordingDropDown,app.deviceDropDown,app.useCpuButton,app.settingsButtons(1),app.settingsButtons(2),app.settingsButtons(3), ...
+                app.runButton,app.atlasPath,app.forwardPath,app.modelButton,app.gpuButton,app.averageSetting,app.recordingTable};
             app.controller = ssdot.app.AppController(app,environment);
         end
         function group = openDataset(app,folder)
@@ -118,8 +124,8 @@ classdef WorkspaceApp < matlab.apps.AppBase
             controls = [struct2cell(app.settings);struct2cell(app.roiSettings);struct2cell(app.exportSettings)];
             for index = 1:numel(controls), controls{index}.Enable = state; end
             app.cancelButton.Enable = matlab.lang.OnOffSwitchState(busy);
-            % ROI and average controls change state derived from the reconstruction.
-            for host = [app.roiHost,app.averageHost]
+            % ROI controls change state derived from the reconstruction.
+            for host = app.roiHost
                 children = findall(host);
                 for index = 1:numel(children)
                     if isprop(children(index),'Enable'), children(index).Enable = state; end
@@ -140,9 +146,8 @@ classdef WorkspaceApp < matlab.apps.AppBase
             app.saveSessionButton.Enable = matlab.lang.OnOffSwitchState(controller.canSaveSession());
             app.exportButton.Enable = matlab.lang.OnOffSwitchState(controller.hasExportableResults());
             app.modelButton.Enable = matlab.lang.OnOffSwitchState(loaded && readiness.modelReady);
-            app.averageNode.Enable = matlab.lang.OnOffSwitchState(numel(controller.averageNodes)>0);
-            app.homerGlmButton.Enable = matlab.lang.OnOffSwitchState(controller.canApplyHomerGlm());
-            app.colorLimitField.Enable = matlab.lang.OnOffSwitchState(startsWith(string(app.scaleDropDown.Value),"Custom"));
+            pMap = string(app.mapDropDown.Value)=="P value";
+            app.colorLimitField.Enable = matlab.lang.OnOffSwitchState(~pMap && startsWith(string(app.scaleDropDown.Value),"Custom"));
             app.readinessLabel.Text = char(readiness.message);
             if ~isempty(app.roiViewer) && isvalid(app.roiViewer), app.roiViewer.refresh(); end
         end
@@ -155,11 +160,27 @@ classdef WorkspaceApp < matlab.apps.AppBase
                 app.controller.closeWhenIdle = true; app.controller.requestCancel();
             else, delete(app); end
         end
+        function value = get.modelAxes(app)
+            if isempty(app.modelAxesStore) || ~all(isvalid(app.modelAxesStore))
+                first = uiaxes(app.modelGrid); first.Layout.Row = 3; first.Layout.Column = 1;
+                second = uiaxes(app.modelGrid); second.Layout.Row = 3; second.Layout.Column = 2;
+                app.modelAxesStore = [first,second];
+            end
+            value = app.modelAxesStore;
+        end
+        function ax = signalAxes(app)
+            %SIGNALAXES The Signals plot, created when first drawn.
+            if isempty(app.signalAxesStore) || ~isvalid(app.signalAxesStore)
+                app.signalAxesStore = uiaxes(app.signalGrid); app.signalAxesStore.Layout.Row = 3; app.signalAxesStore.Layout.Column = 1;
+            end
+            ax = app.signalAxesStore;
+        end
         function clearDataViews(app)
-            axesList = [app.signals.axes,app.modelAxes,app.resultAxes];
+            axesList = [app.signalAxesStore,app.modelAxesStore,app.resultAxes];
             for ax = axesList, delete(findall(ax,'Type','light')); cla(ax,'reset'); colorbar(ax,'off'); axis(ax,'off'); end
             app.resultLabel.Text = 'No result for this recording yet. Press Run Analysis.';
             app.conditionDropDown.Items = {'No result'}; app.conditionDropDown.ItemsData = 1;
+            app.mapDropDown.Value = 'Concentration change'; app.mapDropDown.Enable = 'off';
         end
         function refreshSettings(app,config)
             names = fieldnames(app.settings);
@@ -168,7 +189,7 @@ classdef WorkspaceApp < matlab.apps.AppBase
                 if ~isfield(config,name), control.Value = ''; continue; end
                 value = config.(name);
                 if any(strcmp(name,{'temporalRange','temporalParameters','noiseVariance'})), value = strtrim(sprintf('%.15g ',value)); end
-                if strcmp(name,'temporalMode'), value = char(string(value)); end
+                if strcmp(name,'mapTimePoint'), value = char(string(value)); end
                 control.Value = value;
             end
         end
@@ -184,16 +205,22 @@ classdef WorkspaceApp < matlab.apps.AppBase
                         continue;
                     end
                 end
-                if strcmp(name,'temporalMode'), value = string(value); end
+                if strcmp(name,'mapTimePoint'), value = string(value); end
                 config.(name) = value;
             end
         end
         function refreshRoiSettings(app,values)
-            for name = string(fieldnames(values))', app.roiSettings.(name).Value = values.(name); end
+            for name = string(fieldnames(values))'
+                value = values.(name); if isstring(value), value = char(value); end
+                app.roiSettings.(name).Value = value;
+            end
         end
         function values = readRoiSettings(app)
             values = struct();
-            for name = string(fieldnames(app.roiSettings))', values.(name) = app.roiSettings.(name).Value; end
+            for name = string(fieldnames(app.roiSettings))'
+                value = app.roiSettings.(name).Value; if ischar(value), value = string(value); end
+                values.(name) = value;
+            end
         end
         function delete(app)
             if ~isempty(app.controller) && isvalid(app.controller), delete(app.controller); end
@@ -221,20 +248,12 @@ classdef WorkspaceApp < matlab.apps.AppBase
         end
         function makeAnalysisPanel(app,body)
             panel = uipanel(body,'Title','Analysis','FontWeight','bold');
-            grid = uigridlayout(panel,[16 1]);
-            grid.RowHeight = {18,26,18,26,18,26,18,26,46,28,'fit',36,50,18,18,'1x'}; grid.RowSpacing = 5;
-            uilabel(grid,'Text','Recording shown');
+            grid = uigridlayout(panel,[12 1]);
+            grid.RowHeight = {18,26,18,26,46,28,'fit',36,50,18,18,'1x'}; grid.RowSpacing = 5;
+            uilabel(grid,'Text','Shown (recording or average)');
             app.recordingDropDown = uidropdown(grid,'Items',{'No dataset open'},'ItemsData',0,'Enable','off', ...
-                'Tooltip','Changes what is displayed. Does not start an analysis.', ...
+                'Tooltip','Changes what is displayed. Does not start an analysis. Averages appear after Run Analysis.', ...
                 'ValueChangedFcn',@(~,~)app.controller.perform(@()app.controller.selectRecording()));
-            uilabel(grid,'Text','Run Analysis on');
-            app.scopeDropDown = uidropdown(grid,'Items',{'All recordings','Shown recording only'},'ItemsData',{'all','selected'}, ...
-                'Value','all','ValueChangedFcn',@(~,~)app.updateActions());
-            uilabel(grid,'Text','Profile');
-            app.profileDropDown = uidropdown(grid,'Items',{'Research (full resolution)','Preview (coarse software check)','Custom'}, ...
-                'ItemsData',{'research','preview','custom'},'Value','research', ...
-                'Tooltip','Research keeps full resolution. Preview is a coarse software check, not a scientific result.', ...
-                'ValueChangedFcn',@(~,~)app.controller.perform(@()app.controller.changeProfile()));
             uilabel(grid,'Text','Compute device');
             device = uigridlayout(grid,[1 2]); device.ColumnWidth = {'1x',105}; device.Padding = [0 0 0 0];
             app.deviceDropDown = uidropdown(device,'Items',{'CPU','GPU'},'ItemsData',{'cpu','gpu'},'Value','cpu', ...
@@ -268,7 +287,7 @@ classdef WorkspaceApp < matlab.apps.AppBase
         end
         function makeSignals(app)
             grid = uigridlayout(app.tabs.signals,[3 1]); grid.RowHeight = {30,22,'1x'};
-            controls = uigridlayout(grid,[1 7]); controls.ColumnWidth = {40,160,60,'1x',85,130,120}; controls.Padding = [0 0 0 0];
+            controls = uigridlayout(grid,[1 9]); controls.ColumnWidth = {40,160,60,'1x',85,130,140,65,150}; controls.Padding = [0 0 0 0];
             view = struct();
             uilabel(controls,'Text','Data');
             view.kind = uidropdown(controls,'Items',{'Raw intensity','Optical density'},'ItemsData',{'Raw data','OD'},'Value','OD', ...
@@ -280,24 +299,46 @@ classdef WorkspaceApp < matlab.apps.AppBase
                 'ValueChangedFcn',@(~,~)app.controller.perform(@()app.renderActiveTab()));
             view.average = uicheckbox(controls,'Text','Stored average HRF','Value',false, ...
                 'ValueChangedFcn',@(~,~)app.controller.perform(@()app.renderActiveTab()));
+            uilabel(controls,'Text','Condition','HorizontalAlignment','right');
+            view.condition = uidropdown(controls,'Items',{'None'},'ItemsData',{''},'Enable','off', ...
+                'Tooltip','Condition of the stored average HRF.','ValueChangedFcn',@(~,~)app.controller.perform(@()app.renderActiveTab()));
             view.notice = uilabel(grid,'Text','Open a dataset to view stored signals.','WordWrap','on');
-            view.axes = uiaxes(grid);
+            app.signalGrid = grid;
             app.signals = view;
         end
         function makeResults(app)
-            grid = uigridlayout(app.tabs.results,[3 2]); grid.RowHeight = {30,'fit','1x'};
-            controls = uigridlayout(grid,[1 7]); controls.Layout.Column = [1 2];
-            controls.ColumnWidth = {65,'1x',50,80,75,230,90}; controls.Padding = [0 0 0 0];
+            grid = uigridlayout(app.tabs.results,[4 2]); grid.RowHeight = {30,30,'fit','1x'};
+            render = @(~,~)app.controller.perform(@()app.renderActiveTab());
+            controls = uigridlayout(grid,[1 6]); controls.Layout.Column = [1 2];
+            controls.ColumnWidth = {65,'1x',50,80,40,230}; controls.Padding = [0 0 0 0];
             uilabel(controls,'Text','Condition');
-            app.conditionDropDown = uidropdown(controls,'Items',{'No result'},'ItemsData',1,'ValueChangedFcn',@(~,~)app.controller.perform(@()app.renderActiveTab()));
+            app.conditionDropDown = uidropdown(controls,'Items',{'No result'},'ItemsData',1,'ValueChangedFcn',render);
             uilabel(controls,'Text','Signal');
-            app.chromophoreDropDown = uidropdown(controls,'Items',{'HbO','HbR'},'ValueChangedFcn',@(~,~)app.controller.perform(@()app.renderActiveTab()));
-            uilabel(controls,'Text','Color scale');
-            app.scaleDropDown = uidropdown(controls,'Items',{'Fixed +/-1e-9 (original display)','Auto symmetric (display only)','Custom symmetric (display only)'}, ...
-                'ValueChangedFcn',@(~,~)app.controller.perform(@()app.renderActiveTab()));
-            app.colorLimitField = uieditfield(controls,'numeric','Value',1e-9,'Limits',[0 Inf],'LowerLimitInclusive','off', ...
+            app.chromophoreDropDown = uidropdown(controls,'Items',{'HbO','HbR'},'ValueChangedFcn',render);
+            uilabel(controls,'Text','Map');
+            app.mapDropDown = uidropdown(controls,'Items',{'Concentration change','T value','P value'},'Enable','off', ...
+                'Tooltip','T and P values are calculated for averages of two or more recordings (Average tab).','ValueChangedFcn',render);
+            displayRow = uigridlayout(grid,[1 9]); displayRow.Layout.Column = [1 2];
+            displayRow.ColumnWidth = {70,205,70,62,170,'1x',100,55,115}; displayRow.Padding = [0 0 0 0];
+            uilabel(displayRow,'Text','Color scale');
+            app.scaleDropDown = uidropdown(displayRow,'Items',{'Fixed +/-1e-9 (original display)','Auto symmetric (display only)','Custom symmetric (display only)'}, ...
+                'ValueChangedFcn',render);
+            app.colorLimitField = uieditfield(displayRow,'numeric','Value',1e-9,'Limits',[0 Inf],'LowerLimitInclusive','off', ...
                 'ValueDisplayFormat','%.3g','Enable','off','Tooltip','Custom color limit: the map is shown on [-limit, +limit]. Values are unchanged.', ...
-                'ValueChangedFcn',@(~,~)app.controller.perform(@()app.renderActiveTab()));
+                'ValueChangedFcn',render);
+            uilabel(displayRow,'Text','Colormap','HorizontalAlignment','right');
+            app.colormapDropDown = uidropdown(displayRow,'Items',{'Jet, gray near zero (original)','Jet','Parula','Turbo'}, ...
+                'ItemsData',{'jetNeutral','jet','parula','turbo'},'Value','jetNeutral', ...
+                'Tooltip','Colormap for concentration and T maps. The original display shows values within about 1.2% of the color limit around zero as gray.', ...
+                'ValueChangedFcn',render);
+            uilabel(displayRow,'Text','');
+            uilabel(displayRow,'Text','P map: color p <','HorizontalAlignment','right');
+            app.significanceField = uieditfield(displayRow,'numeric','Value',0.05,'Limits',[0 1],'LowerLimitInclusive','off', ...
+                'ValueDisplayFormat','%.3g','Enable','off','Tooltip','Significance level for the P map: smaller (adjusted) p values are colored, the rest gray.', ...
+                'ValueChangedFcn',render);
+            app.correctionDropDown = uidropdown(displayRow,'Items',{'Uncorrected','FDR (BH)','Bonferroni'}, ...
+                'ItemsData',{'none','fdr','bonferroni'},'Value','none','Enable','off', ...
+                'Tooltip','Multiple-comparison adjustment across the vertices of the shown map: none, false discovery rate (Benjamini-Hochberg) or Bonferroni.','ValueChangedFcn',render);
             app.resultLabel = uilabel(grid,'Text','No result for this recording yet. Press Run Analysis.','WordWrap','on');
             app.resultLabel.Layout.Column = [1 2];
             app.resultAxes = [uiaxes(grid),uiaxes(grid)];
@@ -317,40 +358,35 @@ classdef WorkspaceApp < matlab.apps.AppBase
                 'ButtonPushedFcn',@(~,~)app.controller.perform(@()app.controller.prepareModelView()));
             app.modelNotice = uilabel(grid,'Text','Model views are available after Run Analysis or Load model for viewing.','WordWrap','on');
             app.modelNotice.Layout.Column = [1 2];
-            app.modelAxes = [uiaxes(grid),uiaxes(grid)];
-        end
-        function makeAverage(app)
-            grid = uigridlayout(app.tabs.average,[3 1]); grid.RowHeight = {30,'fit','1x'};
-            row = uigridlayout(grid,[1 2]); row.ColumnWidth = {130,'1x'}; row.Padding = [0 0 0 0];
-            uilabel(row,'Text','Average within');
-            app.averageNode = uidropdown(row,'Items',{'Open a dataset'},'ItemsData',0,'Enable','off', ...
-                'ValueChangedFcn',@(~,~)app.controller.perform(@()app.controller.openAverage()));
-            uilabel(grid,'WordWrap','on','Text', ...
-                'Arithmetic mean of completed recordings that share the same settings and conditions. The averaged map appears in Results.');
-            app.averageHost = uipanel(grid,'BorderType','none');
+            app.modelGrid = grid;
         end
         function makeSettings(app)
-            grid = uigridlayout(app.tabs.settings,[35 3]); grid.ColumnWidth = {260,'1x',90}; grid.Scrollable = 'on';
-            grid.RowHeight = [repmat({26},1,1),{'fit'},repmat({26},1,33)]; grid.RowSpacing = 5;
-            app.section(grid,'Reconstruction (changes mark results out of date until the next Run Analysis)');
-            app.label(grid,'Homer GLM in this dataset');
-            app.homerGlmLabel = uilabel(grid,'Text','Open a dataset to read its Homer hmrR_GLM settings.','WordWrap','on');
-            app.homerGlmButton = uibutton(grid,'Text','Use these','Enable','off', ...
-                'Tooltip','Copy the dataset''s Homer GLM time range, gamma parameters, short-separation threshold and drift order into these settings.', ...
-                'ButtonPushedFcn',@(~,~)app.controller.perform(@()app.controller.applyHomerGlm()));
-            app.label(grid,'Temporal convention');
-            app.settings.temporalMode = uidropdown(grid,'Items',{'Professor original','Duration based (previous GUI)'}, ...
-                'ItemsData',{'professorOriginal','durationBased'},'Value','professorOriginal', ...
-                'Tooltip','Professor original smooths the gamma basis with configured T and uses onset impulses. Duration based spreads events over their recorded durations. Parameters below are not changed by this selector; the previous GUI HbR tau was 0.5 s.', ...
-                'ValueChangedFcn',@(~,~)app.controller.perform(@()app.controller.applySettings()));
+            grid = uigridlayout(app.tabs.settings,[60 3]); grid.ColumnWidth = {260,'1x',90}; grid.Scrollable = 'on';
+            grid.RowHeight = [repmat({26},1,1),{'fit'},repmat({26},1,58)]; grid.RowSpacing = 5;
+            app.label(grid,'Settings are remembered between sessions');
+            files = uigridlayout(grid,[1 4]); files.ColumnWidth = {130,130,130,'1x'}; files.Padding = [0 0 0 0];
+            app.settingsButtons = [ ...
+                uibutton(files,'Text','Save settings...','Tooltip','Save all settings to a file, e.g. to share or reuse a configuration.', ...
+                    'ButtonPushedFcn',@(~,~)app.controller.perform(@()app.controller.saveSettingsAs())), ...
+                uibutton(files,'Text','Load settings...','Tooltip','Replace all settings with those saved in a file.', ...
+                    'ButtonPushedFcn',@(~,~)app.controller.perform(@()app.controller.loadSettings())), ...
+                uibutton(files,'Text','Restore defaults','Tooltip','Return every setting to its default value.', ...
+                    'ButtonPushedFcn',@(~,~)app.controller.perform(@()app.controller.restoreDefaults()))];
             app.spacer(grid);
+            app.section(grid,'Reconstruction (changes mark results out of date until the next Run Analysis)');
             fields = ["brainSamplingThreshold","scalpSamplingThreshold","brainSigma","scalpSigma","sensitivityThreshold", ...
-                "longSeparationThreshold","shortSeparationThreshold","driftOrder","alpha","beta"];
-            labels = {'Brain sampling threshold','Scalp sampling threshold','Brain kernel sigma','Scalp kernel sigma','Log10 sensitivity threshold', ...
+                "scalpSensitivityThreshold","longSeparationThreshold","shortSeparationThreshold","driftOrder","alpha","beta"];
+            labels = {'Brain sampling threshold','Scalp sampling threshold','Brain kernel sigma','Scalp kernel sigma', ...
+                'Brain log10 sensitivity threshold','Scalp log10 sensitivity threshold', ...
                 'Long-channel minimum (mm)','Short-channel maximum (mm)','Drift order','Alpha','Beta'};
+            tips = {'','','','','Brain vertices whose summed log10 sensitivity (first wavelength) exceeds this are reconstructed.', ...
+                'Scalp vertices whose summed log10 sensitivity (first wavelength) exceeds this are modelled.', ...
+                'Channels at least this long are image channels; shorter ones are excluded from the image.', ...
+                'Active channels shorter than this provide the short-separation regressor (the mean of all of them).', ...
+                '','Regularization strength, relative to the largest eigenvalue. For Truncated SVD: the relative singular-value cutoff.',''};
             for index = 1:numel(fields)
                 app.label(grid,labels{index});
-                app.settings.(fields(index)) = uieditfield(grid,'numeric','Value',0,'HorizontalAlignment','left', ...
+                app.settings.(fields(index)) = uieditfield(grid,'numeric','Value',0,'HorizontalAlignment','left','Tooltip',tips{index}, ...
                     'ValueChangedFcn',@(~,~)app.controller.perform(@()app.controller.applySettings()));
                 app.spacer(grid);
             end
@@ -362,17 +398,37 @@ classdef WorkspaceApp < matlab.apps.AppBase
             app.settings.spatialRegularization = uicheckbox(grid,'Text','Enable existing normalization','Value',false, ...
                 'ValueChangedFcn',@(~,~)app.controller.perform(@()app.controller.applySettings()));
             app.spacer(grid);
+            app.label(grid,'Normalization damping (x max)');
+            app.settings.normalizationDamping = uieditfield(grid,'numeric','Value',0.1,'Limits',[0 Inf],'HorizontalAlignment','left', ...
+                'Tooltip','Spatial normalization divides each vertex by sqrt(sum A^2 + damping x max). Published value 0.1; used only when normalization is enabled.', ...
+                'ValueChangedFcn',@(~,~)app.controller.perform(@()app.controller.applySettings()));
+            app.spacer(grid);
+            app.label(grid,'Map time point');
+            app.settings.mapTimePoint = uidropdown(grid,'Items',{'HbO basis peak for both','Each chromophore''s own basis peak'}, ...
+                'ItemsData',{'hboPeak','ownPeak'},'Value','hboPeak', ...
+                'Tooltip','Time of the reconstructed response shown as the HbO/HbR maps.', ...
+                'ValueChangedFcn',@(~,~)app.controller.perform(@()app.controller.applySettings()));
+            app.spacer(grid);
             app.label(grid,'Temporal range [start end] (s)');
             app.settings.temporalRange = uieditfield(grid,'text','Value','-2 18','ValueChangedFcn',@(~,~)app.controller.perform(@()app.controller.applySettings()));
             app.spacer(grid);
             app.label(grid,'Temporal basis parameters (s)');
             app.settings.temporalParameters = uieditfield(grid,'text','Value','0.1 3 7 0.1 3 7', ...
-                'Tooltip','[tau HbO, sigma HbO, smoothing T HbO, tau HbR, sigma HbR, smoothing T HbR] in seconds. Professor main.m uses tau 0.1 s for both chromophores.', ...
+                'Tooltip','[tau HbO, sigma HbO, smoothing T HbO, tau HbR, sigma HbR, smoothing T HbR] in seconds.', ...
                 'ValueChangedFcn',@(~,~)app.controller.perform(@()app.controller.applySettings()));
             app.spacer(grid);
             app.label(grid,'Noise variances (noise weighted only)');
             app.settings.noiseVariance = uieditfield(grid,'text','Placeholder','Explicit positive measurement variances', ...
                 'ValueChangedFcn',@(~,~)app.controller.perform(@()app.controller.applySettings()));
+            app.spacer(grid);
+            app.section(grid,'Averages (calculated by Run Analysis from current results; no reconstruction)');
+            app.label(grid,'Averages, T and P values');
+            app.averageSetting = uicheckbox(grid,'Value',true, ...
+                'Text','Average every session, subject and group with two or more results', ...
+                'Tooltip',['A session averages its recordings, a subject its sessions and the group its subjects. ' ...
+                'Conditions are matched by name. Each average has per-vertex T and P values (one-sample t-test against zero). ' ...
+                'Averages appear in the Shown list.'], ...
+                'ValueChangedFcn',@(~,~)app.controller.perform(@()app.controller.setAveragesEnabled(app.averageSetting.Value)));
             app.spacer(grid);
             app.section(grid,'Model inputs (default: the opened dataset folder)');
             app.label(grid,'Atlas file');
@@ -383,9 +439,13 @@ classdef WorkspaceApp < matlab.apps.AppBase
             app.forwardPath = uieditfield(grid,'text','ValueChangedFcn',@(~,~)app.controller.perform(@()app.controller.pathsChanged()));
             browse = uibutton(grid,'Text','Browse...','ButtonPushedFcn',@(~,~)app.controller.perform(@()app.controller.browseForwardModel()));
             app.inputControls{end+1} = browse;
-            app.section(grid,'ROI (HbO threshold selection, computed by Run Analysis for every condition)');
+            app.section(grid,'ROI (threshold selection, computed by Run Analysis for every condition)');
+            app.label(grid,'ROI signal');
+            app.roiSettings.signal = uidropdown(grid,'Items',{'HbO increase','HbR decrease'},'ItemsData',{'HbO','HbR'},'Value','HbO', ...
+                'ValueChangedFcn',@(~,~)app.controller.perform(@()app.controller.applyRoiSettings()));
+            app.spacer(grid);
             names = ["upperThreshold","lowerThreshold","exclusionDistance"];
-            labels = {'ROI: fraction of peak HbO','Non-ROI: below fraction of peak','Non-ROI exclusion distance (mesh units)'};
+            labels = {'ROI: fraction of peak','Non-ROI: below fraction of peak','Non-ROI exclusion distance (mesh units)'};
             for index = 1:numel(names)
                 app.label(grid,labels{index});
                 app.roiSettings.(names(index)) = uieditfield(grid,'numeric','HorizontalAlignment','left','Limits',[0 Inf], ...
@@ -411,6 +471,14 @@ classdef WorkspaceApp < matlab.apps.AppBase
             app.label(grid,'Image resolution (DPI)');
             app.exportSettings.dpi = uieditfield(grid,'numeric','Value',300,'Limits',[72 600],'RoundFractionalValues','on','HorizontalAlignment','left');
             app.spacer(grid);
+            app.label(grid,'Figure size (width x height, pixels)');
+            sizeRow = uigridlayout(grid,[1 2]); sizeRow.Padding = [0 0 0 0];
+            app.exportSettings.width = uieditfield(sizeRow,'numeric','Value',1200,'Limits',[400 4000],'RoundFractionalValues','on','HorizontalAlignment','left');
+            app.exportSettings.height = uieditfield(sizeRow,'numeric','Value',700,'Limits',[300 4000],'RoundFractionalValues','on','HorizontalAlignment','left');
+            app.spacer(grid);
+            % Size the grid to the rows actually used.
+            used = max(arrayfun(@(child)max(child.Layout.Row),grid.Children));
+            grid.RowHeight = grid.RowHeight(1:used);
         end
         function makeLog(app)
             grid = uigridlayout(app.tabs.log,[2 2]); grid.RowHeight = {'1x','1x'}; grid.ColumnWidth = {'1x','1x'};

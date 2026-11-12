@@ -10,6 +10,9 @@ classdef AppController < handle
         runs = []
         recordingInfo = struct([])
         averageNodes = {}
+        % Averages calculated by the most recent Run Analysis, in the order shown.
+        averageStates = ssdot.app.ReconstructionState.empty
+        averagesEnabled = true
         datasetRoot = ""
         selectedNode = []
         displayedState = []
@@ -20,7 +23,7 @@ classdef AppController < handle
         previewDerived = false
         atlasFile = ""
         forwardFolder = ""
-        roiSettings = struct('upperThreshold',0.90,'lowerThreshold',0.01,'exclusionDistance',40)
+        roiSettings = ssdot.app.defaultRoiSettings()
         % hmrR_GLM settings stored in the dataset's Homer processing stream (read on open).
         homerGlm = []
         homerGlmNote = ""
@@ -59,8 +62,16 @@ classdef AppController < handle
             obj.states = containers.Map('KeyType','char','ValueType','any');
             obj.sharedCache = ssdot.io.SharedCache();
             obj.chooser = defaultChooser();
-            obj.config = ssdot.app.profileConfig("research","cpu");
+            obj.config = ssdot.app.defaultConfig();
             app.refreshSettings(obj.config); app.refreshRoiSettings(obj.roiSettings);
+            % Settings from the previous session; defaults if none or unreadable.
+            if isfile(obj.settingsFile())
+                try
+                    obj.readSettingsFile(obj.settingsFile()); obj.log('Restored the settings of the previous session.');
+                catch exception
+                    obj.log("Previous settings were not restored: "+string(exception.message));
+                end
+            end
             obj.resetStageTable('Pending');
             obj.checkGpu(false);
             obj.log('Ready. Open a dataset; nothing is computed until Run Analysis.');
@@ -68,7 +79,7 @@ classdef AppController < handle
             app.updateActions();
         end
         function delete(obj)
-            obj.stopClock(); obj.closeLoadDialog(); obj.destroyRoiViewer(); obj.destroyAverageViewer();
+            obj.stopClock(); obj.closeLoadDialog(); obj.destroyRoiViewer();
         end
         function perform(obj,action)
             try
@@ -116,10 +127,10 @@ classdef AppController < handle
                 obj.log(obj.app.progressLabel.Text); rethrow(exception);
             end
             % Commit only after a complete, successful read.
-            obj.destroyRoiViewer(); obj.destroyAverageViewer();
+            obj.destroyRoiViewer();
             obj.group = group; obj.datasetRoot = folder; obj.selectedNode = []; obj.displayedState = [];
             obj.states = containers.Map('KeyType','char','ValueType','any');
-            obj.runs = []; obj.averageNodes = {};
+            obj.runs = []; obj.averageNodes = {}; obj.averageStates = ssdot.app.ReconstructionState.empty;
             for index = 1:numel(group)
                 obj.runs = [obj.runs,obj.leafRuns(group(index))]; obj.collectAverageNodes(group(index)); %#ok<AGROW>
             end
@@ -128,22 +139,7 @@ classdef AppController < handle
             obj.atlasFile = fullfile(folder,'atlasViewer.mat'); obj.forwardFolder = folder;
             obj.app.atlasPath.Value = char(obj.atlasFile); obj.app.forwardPath.Value = char(obj.forwardFolder);
             obj.app.datasetPath.Value = char(folder);
-            names = cellstr(string({obj.runs.name}));
-            if isempty(names)
-                obj.app.recordingDropDown.Items = {'No recordings found'}; obj.app.recordingDropDown.ItemsData = 0;
-            else
-                obj.app.recordingDropDown.Items = names; obj.app.recordingDropDown.ItemsData = 1:numel(names);
-                obj.app.recordingDropDown.Value = 1;
-            end
-            if isempty(obj.averageNodes)
-                obj.app.averageNode.Items = {'No groups'}; obj.app.averageNode.ItemsData = 0;
-            else
-                obj.app.averageNode.Items = cellfun(@(node)char(string(node.type)+": "+string(node.name)),obj.averageNodes,'UniformOutput',false);
-                % Default to the first level whose children are recordings: the usual average.
-                runParents = find(cellfun(@(node)any(arrayfun(@(child)isa(child,'RunClass'),ssdot.io.nodeChildren(node))),obj.averageNodes),1);
-                if isempty(runParents), runParents = 1; end
-                obj.app.averageNode.ItemsData = 1:numel(obj.averageNodes); obj.app.averageNode.Value = runParents;
-            end
+            obj.refreshShownList();
             obj.app.clearDataViews(); obj.resetStageTable('Pending');
             obj.app.progressGauge.Value = 0; obj.app.progressLabel.Text = '';
             obj.app.stageLabel.Text = 'No analysis running.';
@@ -151,7 +147,6 @@ classdef AppController < handle
             clear cleanup;
             if ~isvalid(obj), return; end % closed while opening
             if ~isempty(obj.runs), obj.selectRecording(); end
-            obj.openAverage();
             obj.app.statusLabel.Text = sprintf('Opened %d recordings. Review Overview and Settings, then press Run Analysis.',numel(obj.runs));
             obj.app.setBanner(sprintf('Dataset opened: %d recordings. Nothing has been computed yet.',numel(obj.runs)),'info');
             obj.refreshRecordingStatuses(); obj.app.showTab('overview'); obj.app.updateActions();
@@ -187,19 +182,13 @@ classdef AppController < handle
             assert(~obj.busy,'SSDOT:Busy','Wait for the current analysis to finish before changing recordings.');
             index = obj.app.recordingDropDown.Value;
             if isempty(obj.runs) || index<1, return; end
-            node = obj.runs(index);
+            node = obj.shownNode(index);
             if ~isempty(obj.selectedNode) && obj.selectedNode~=node
                 previous = obj.stateForNode(obj.selectedNode);
                 previous.sensitivity = []; previous.observations = []; previous.spatialBasis = [];
             end
             obj.selectedNode = node; state = obj.stateForNode(node); obj.displayedState = state;
-            list = node.acquired.GetMeasList(); pairs = unique(list(:,1:2),'rows','stable');
-            view = obj.app.signals;
-            view.channel.Items = cellstr(compose('S%d-D%d',pairs(:,1),pairs(:,2)))'; view.channel.ItemsData = 1:size(pairs,1); view.channel.Value = 1;
-            wavelengths = node.acquired.probe.wavelengths(:);
-            allLabel = 'All'; if numel(wavelengths)==2, allLabel = 'Both'; end
-            view.signal.Items = [cellstr(compose('%g nm',wavelengths))',{allLabel}];
-            view.signal.ItemsData = [1:numel(wavelengths),0]; view.signal.Value = 1;
+            if isa(node,'RunClass'), obj.prepareSignalControls(node); end
             obj.destroyRoiViewer(); obj.lastError = [];
             if isempty(state.result)
                 obj.app.clearDataViews();
@@ -209,6 +198,45 @@ classdef AppController < handle
             obj.app.statusLabel.Text = char("Showing "+state.nodeName+" ("+obj.displayStatus(state)+").");
             obj.log('Showing '+state.nodeName);
             obj.app.renderActiveTab(); obj.refreshRecordingStatuses(); obj.app.updateActions();
+        end
+        function prepareSignalControls(obj,node)
+            list = node.acquired.GetMeasList(); pairs = unique(list(:,1:2),'rows','stable');
+            view = obj.app.signals;
+            view.channel.Items = cellstr(compose('S%d-D%d',pairs(:,1),pairs(:,2)))'; view.channel.ItemsData = 1:size(pairs,1); view.channel.Value = 1;
+            wavelengths = node.acquired.probe.wavelengths(:);
+            allLabel = 'All'; if numel(wavelengths)==2, allLabel = 'Both'; end
+            view.signal.Items = [cellstr(compose('%g nm',wavelengths))',{allLabel}];
+            view.signal.ItemsData = [1:numel(wavelengths),0]; view.signal.Value = 1;
+            conditions = string(node.CondNames);
+            if isempty(conditions), view.condition.Items = {'None'}; view.condition.ItemsData = {''};
+            else, view.condition.Items = cellstr(conditions); view.condition.ItemsData = cellstr(conditions); end
+            view.condition.Value = view.condition.ItemsData{1};
+        end
+        function refreshShownList(obj)
+            %REFRESHSHOWNLIST Recordings first, then the averages from the most recent Run Analysis.
+            dropdown = obj.app.recordingDropDown;
+            if isempty(obj.runs)
+                dropdown.Items = {'No recordings found'}; dropdown.ItemsData = 0; dropdown.Value = 0; return;
+            end
+            names = cellstr(string({obj.runs.name}));
+            for state = obj.averageStates, names{end+1} = char(averageLabel(state)); end %#ok<AGROW>
+            dropdown.Items = names; dropdown.ItemsData = 1:numel(names);
+            index = obj.shownIndex(obj.selectedNode);
+            if isempty(index), index = 1; end
+            dropdown.Value = index;
+        end
+        function index = shownIndex(obj,node)
+            index = [];
+            if isempty(node), return; end
+            index = find(arrayfun(@(run)isequal(run,node),obj.runs),1);
+            if isempty(index)
+                position = find(arrayfun(@(state)isequal(state.node,node),obj.averageStates),1);
+                if ~isempty(position), index = numel(obj.runs)+position; end
+            end
+        end
+        function node = shownNode(obj,index)
+            if index<=numel(obj.runs), node = obj.runs(index);
+            else, node = obj.averageStates(index-numel(obj.runs)).node; end
         end
         function state = stateForNode(obj,node)
             key = sprintf('%s:%s:%d:%d:%d:%d',node.type,node.name,node.iGroup,node.iSubj,node.iSess,node.iRun);
@@ -222,15 +250,67 @@ classdef AppController < handle
         end
 
         %% Workspace settings: never start computation
-        function changeProfile(obj)
-            assert(~obj.busy,'SSDOT:Busy','Profile changes are disabled during an analysis.');
-            profile = string(obj.app.profileDropDown.Value);
-            if profile~="custom"
-                obj.config = ssdot.app.profileConfig(profile,string(obj.app.deviceDropDown.Value));
-                obj.previewDerived = profile=="preview";
-                obj.app.refreshSettings(obj.config);
+        function restoreDefaults(obj)
+            assert(~obj.busy,'SSDOT:Busy','Settings are locked during an analysis.');
+            device = obj.config.device; % The compute device is a hardware choice, not a setting default.
+            obj.config = ssdot.app.defaultConfig(); obj.config.device = device;
+            obj.roiSettings = ssdot.app.defaultRoiSettings(); obj.averagesEnabled = true; obj.previewDerived = false;
+            obj.refreshSettingControls(); obj.settingsChanged('Settings restored to defaults');
+        end
+        function saveSettingsAs(obj,filename)
+            if nargin<2
+                filename = obj.chooser.saveFile({'*.mat','SS-DOT settings'},'Save settings',fullfile(obj.environment.paths.root,'ssdot-settings.mat'));
+                if strlength(filename)==0, return; end
             end
-            obj.profile = profile; obj.settingsChanged('Profile: '+profile);
+            obj.writeSettings(filename); obj.log("Saved settings to "+string(filename));
+            obj.app.statusLabel.Text = char("Saved settings to "+string(filename));
+        end
+        function loadSettings(obj,filename)
+            assert(~obj.busy,'SSDOT:Busy','Settings are locked during an analysis.');
+            if nargin<2
+                filename = obj.chooser.openFile({'*.mat','SS-DOT settings'},'Load settings',char(obj.environment.paths.root));
+                if strlength(filename)==0, return; end
+            end
+            obj.readSettingsFile(filename);
+            obj.settingsChanged("Loaded settings from "+string(filename));
+        end
+        function readSettingsFile(obj,filename)
+            %READSETTINGSFILE Validate a settings file completely before applying any of it.
+            variables = whos('-file',filename);
+            assert(any(strcmp({variables.name},'ssdotSettings')),'SSDOT:SettingsFormat','%s is not an SS-DOT settings file.',filename);
+            saved = load(filename,'ssdotSettings').ssdotSettings;
+            assert(isfield(saved,'schemaVersion') && saved.schemaVersion==1,'SSDOT:SettingsFormat','Unsupported SS-DOT settings version.');
+            config = ssdot.app.completeConfig(saved.config); obj.validateConfig(config);
+            roi = ssdot.app.defaultRoiSettings();
+            for name = string(fieldnames(roi))', if isfield(saved.roiSettings,name), roi.(name) = saved.roiSettings.(name); end, end
+            roi.signal = string(roi.signal);
+            assert(any(roi.signal==["HbO","HbR"]),'SSDOT:RoiSignal','Invalid ROI signal in the settings file.');
+            for name = ["upperThreshold","lowerThreshold","exclusionDistance"]
+                validateattributes(roi.(name),{'numeric'},{'scalar','finite','nonnegative'},'',name);
+            end
+            obj.config = config; obj.roiSettings = roi; obj.averagesEnabled = logical(saved.averagesEnabled); obj.previewDerived = false;
+            obj.refreshSettingControls();
+        end
+        function writeSettings(obj,filename)
+            ssdotSettings = struct('schemaVersion',1,'config',stripRuntime(obj.config), ... %#ok<NASGU>
+                'roiSettings',obj.roiSettings,'averagesEnabled',obj.averagesEnabled);
+            save(filename,'ssdotSettings');
+        end
+        function rememberSettings(obj)
+            %REMEMBERSETTINGS Keep the current settings for the next session.
+            try
+                obj.writeSettings(obj.settingsFile());
+            catch exception
+                obj.log("Settings could not be remembered: "+string(exception.message));
+            end
+        end
+        function filename = settingsFile(obj)
+            filename = fullfile(obj.environment.paths.root,'settings.mat');
+        end
+        function refreshSettingControls(obj)
+            obj.app.refreshSettings(obj.config); obj.app.refreshRoiSettings(obj.roiSettings);
+            obj.app.averageSetting.Value = obj.averagesEnabled;
+            obj.app.deviceDropDown.Value = char(string(obj.config.device));
         end
         function applySettings(obj)
             assert(~obj.busy,'SSDOT:Busy','Settings are locked during an analysis.');
@@ -240,7 +320,7 @@ classdef AppController < handle
             catch exception
                 obj.app.refreshSettings(obj.config); rethrow(exception);
             end
-            obj.config = config; obj.profile = "custom"; obj.app.profileDropDown.Value = 'custom';
+            obj.config = config;
             obj.settingsChanged('Reconstruction settings edited');
         end
         function settingsChanged(obj,message)
@@ -249,6 +329,7 @@ classdef AppController < handle
                 if ~isempty(state.result) && ~obj.isCurrent(state), outdated = outdated+1; end
             end
             obj.log(message+"; "+outdated+" existing result(s) now out of date.");
+            obj.rememberSettings();
             obj.updateProfileBanner(outdated);
             obj.refreshRecordingStatuses(); obj.app.renderActiveTab(); obj.app.updateActions();
         end
@@ -272,6 +353,10 @@ classdef AppController < handle
                 validateattributes(config.(name{1}),{'numeric'},{'scalar','finite','nonnegative'},'',name{1});
             end
             for name = {'brainSigma','scalpSigma'}, validateattributes(config.(name{1}),{'numeric'},{'scalar','finite','positive'},'',name{1}); end
+            for name = {'sensitivityThreshold','scalpSensitivityThreshold'}, validateattributes(config.(name{1}),{'numeric'},{'scalar','finite'},'',name{1}); end
+            validateattributes(config.normalizationDamping,{'numeric'},{'scalar','finite','nonnegative'},'','normalizationDamping');
+            assert(any(string(config.mapTimePoint)==["hboPeak","ownPeak"]),'SSDOT:MapTimePoint','Choose the HbO peak or each chromophore''s own peak.');
+            assert(any(string(config.reconstructionBackend)==["compressed","dense"]),'SSDOT:Backend','Choose the compressed or dense solver.');
             validateattributes(config.driftOrder,{'numeric'},{'scalar','integer','nonnegative'},'','driftOrder');
             validateattributes(config.temporalRange,{'numeric'},{'vector','numel',2,'finite'},'','temporalRange');
             assert(config.temporalRange(2)>config.temporalRange(1),'SSDOT:TemporalRange','Temporal range must increase.');
@@ -321,13 +406,15 @@ classdef AppController < handle
         function applyRoiSettings(obj)
             assert(~obj.busy,'SSDOT:Busy','ROI settings are locked during an analysis.');
             values = obj.app.readRoiSettings();
-            for name = string(fieldnames(values))'
+            for name = ["upperThreshold","lowerThreshold","exclusionDistance"]
                 validateattributes(values.(name),{'numeric'},{'scalar','finite','nonnegative'},'',name);
             end
+            assert(any(values.signal==["HbO","HbR"]),'SSDOT:RoiSignal','Choose HbO or HbR for the ROI rule.');
             obj.roiSettings = values;
+            obj.rememberSettings();
             stale = sum(arrayfun(@(state)obj.roiStatus(state)=="stale",obj.allStates()));
-            obj.log(sprintf('ROI settings changed (fraction %.4g, non-ROI %.4g, exclusion %.4g); %d recording ROI set(s) need updating.', ...
-                values.upperThreshold,values.lowerThreshold,values.exclusionDistance,stale));
+            obj.log(sprintf('ROI settings changed (%s, fraction %.4g, non-ROI %.4g, exclusion %.4g); %d recording ROI set(s) need updating.', ...
+                values.signal,values.upperThreshold,values.lowerThreshold,values.exclusionDistance,stale));
             if stale>0
                 obj.app.setBanner(sprintf('ROI settings changed. Use Update ROIs in the ROI tab or Run Analysis to update %d ROI set(s); reconstructions are reused.',stale),'warning');
             end
@@ -350,25 +437,27 @@ classdef AppController < handle
                     newline+"Set Settings > Model inputs.";
                 return;
             end
-            scope = string(obj.app.scopeDropDown.Value);
-            if scope=="selected", target = "the shown recording"; else, target = "all "+numel(obj.runs)+" recordings"; end
+            averagesText = ""; if obj.averagesEnabled, averagesText = ", then averages with T and P values"; end
+            target = "all "+numel(obj.runs)+" recordings";
             states = obj.allRecordingStates();
             current = sum(arrayfun(@(state)obj.isCurrent(state),states));
             device = upper(string(obj.config.device));
-            profileName = struct('research',"Research",'preview',"Preview",'custom',"Custom");
-            report.message = "Ready. Run Analysis processes "+target+" ("+profileName.(char(obj.profile))+", "+device+ ...
-                "): input checks, reconstruction and ROI."+newline+current+" of "+numel(obj.runs)+" recordings have current results.";
+            report.message = "Ready. Run Analysis processes "+target+" on "+device+": input checks, reconstruction and ROI"+averagesText+ ...
+                ". Unchanged results are reused."+newline+current+" of "+numel(obj.runs)+" recordings have current results.";
         end
 
         %% The single analysis action
         function runAnalysis(obj,scope)
             if obj.busy, return; end
-            if nargin<2, scope = string(obj.app.scopeDropDown.Value); end
+            if nargin<2, scope = "all"; end
             assert(~isempty(obj.runs),'SSDOT:NoDataset','Open a dataset first.');
             report = obj.readiness();
             assert(report.modelReady,'SSDOT:MissingInputs','Required inputs missing: %s',strjoin(report.missing,newline));
             obj.validateConfig(obj.config);
-            current = obj.app.recordingDropDown.Value;
+            % The shown item: a recording, or an average whose recordings are run.
+            shown = obj.shownNode(obj.app.recordingDropDown.Value);
+            members = shown; if ~isa(shown,'RunClass'), members = obj.leafRuns(shown); end
+            current = find(arrayfun(@(run)any(arrayfun(@(member)isequal(run,member),members)),obj.runs));
             if string(scope)=="selected", indices = current;
             else, indices = [current,setdiff(1:numel(obj.runs),current,'stable')]; end
             obj.processIndices(indices,string(scope));
@@ -387,7 +476,7 @@ classdef AppController < handle
             obj.lastError = []; obj.app.errorDetails.Value = {'No error.'};
             started = tic; outcomes = struct('name',{},'status',{},'message',{},'reused',{},'roiCounts',{});
             obj.app.setBanner(sprintf('Running analysis on %d recording(s). Cancel stops at the next safe boundary.',numel(indices)),'info');
-            obj.log(sprintf('Run Analysis: %d recording(s), %s profile, %s.',numel(indices),obj.profile,obj.config.device));
+            obj.log(sprintf('Run Analysis: %d recording(s), %s.',numel(indices),obj.config.device));
             cancelled = false;
             for position = 1:numel(indices)
                 obj.batchPosition = position;
@@ -432,7 +521,12 @@ classdef AppController < handle
                 obj.refreshRecordingStatuses(); drawnow limitrate;
                 if cancelled, break; end
             end
-            obj.lastRun = struct('scope',scope,'outcomes',outcomes,'cancelled',cancelled,'elapsedSeconds',toc(started));
+            averages = 0;
+            if ~cancelled && obj.averagesEnabled
+                obj.app.stageLabel.Text = 'Averages, T and P values'; drawnow limitrate;
+                averages = obj.updateAverages();
+            end
+            obj.lastRun = struct('scope',scope,'outcomes',outcomes,'cancelled',cancelled,'elapsedSeconds',toc(started),'averages',averages);
             if ~obj.closeWhenIdle, obj.summarizeRun(); end
         end
         function summarizeRun(obj)
@@ -449,6 +543,9 @@ classdef AppController < handle
             else
                 text = string(sprintf('Analysis complete: %d recording(s) in %.0f s. ROIs calculated for every condition.',completed,obj.lastRun.elapsedSeconds));
                 if emptyRois>0, text = text+sprintf(' %d condition(s) had no vertices above the ROI threshold (empty ROI).',emptyRois); end
+                if isfield(obj.lastRun,'averages') && obj.lastRun.averages>0
+                    text = text+sprintf(' %d average(s) with T and P values are in the Shown list.',obj.lastRun.averages);
+                end
                 kind = "info";
             end
             obj.app.statusLabel.Text = char(text); obj.app.progressLabel.Text = 'Finished.';
@@ -594,7 +691,8 @@ classdef AppController < handle
         function loadPreparedInputs(obj,state,inputs)
             if nargin<3, assert(~isempty(obj.pendingInputs),'SSDOT:Preflight','Check inputs first.'); inputs = obj.pendingInputs; end
             state.atlas = inputs.atlas;
-            state.preparationKey = ssdot.io.valueHash({inputs.modelIdentity,inputs.recording.activeMeasurements,state.config.sensitivityThreshold,state.config.spatialRegularization,state.config.longSeparationThreshold});
+            state.preparationKey = ssdot.io.valueHash({inputs.modelIdentity,inputs.recording.activeMeasurements,state.config.sensitivityThreshold,state.config.spatialRegularization,state.config.longSeparationThreshold, ...
+                state.config.scalpSensitivityThreshold,state.config.normalizationDamping});
             if isempty(state.sensitivity)
                 [value,found] = obj.sharedCache.get("sensitivity:"+state.preparationKey);
                 if ~found, value = ssdot.recon.prepareSensitivity(inputs.model,inputs.recording.activeMeasurements,state.config); obj.sharedCache.put("sensitivity:"+state.preparationKey,value); end
@@ -699,8 +797,9 @@ classdef AppController < handle
 
         %% ROI: derived from a result, recomputed without repeating the inverse
         function computeRois(obj,state,settings)
-            %COMPUTEROIS Existing findRoi HbO-threshold rule for every condition.
+            %COMPUTEROIS Existing findRoi threshold rule for every condition (HbO increase or HbR decrease).
             if nargin<3, settings = obj.roiSettings; end
+            settings = completeRoiSettings(settings);
             assert(~isempty(state.result),'SSDOT:MissingResult','ROI selection needs a reconstruction.');
             assert(~isempty(state.atlas),'SSDOT:MissingAtlas','ROI selection needs the forward-model atlas.');
             assert(~isempty(state.brainMask),'SSDOT:MissingBrainMask', ...
@@ -710,10 +809,14 @@ classdef AppController < handle
             rois = emptyRois();
             for condition = 1:size(state.result.hbo,2)
                 if obj.busy, obj.reportProgress("ROI selection",condition-1,size(state.result.hbo,2)); end
-                [indices,nonRoi] = ssdot.recon.findRoi(state.result.hbo(:,condition),state.result.hbr(:,condition), ...
+                % findRoi thresholds its first argument; an HbR decrease is selected as -HbR.
+                intensity = state.result.hbo(:,condition);
+                if settings.signal=="HbR", intensity = -state.result.hbr(:,condition); end
+                [indices,nonRoi] = ssdot.recon.findRoi(intensity,state.result.hbr(:,condition), ...
                     struct('mask_brain',state.brainMask),surface.vertices,settings.upperThreshold,settings.lowerThreshold, ...
                     settings.exclusionDistance,struct('original_ROI',0));
-                source = struct('kind',"Automatic findRoi HbO threshold",'condition',condition,'conditionName',names(condition), ...
+                kind = "Automatic findRoi HbO increase threshold"; if settings.signal=="HbR", kind = "Automatic findRoi HbR decrease threshold"; end
+                source = struct('kind',kind,'condition',condition,'conditionName',names(condition), ...
                     'upperThreshold',settings.upperThreshold,'lowerThreshold',settings.lowerThreshold, ...
                     'exclusionDistance',settings.exclusionDistance,'node',state.nodeName,'resultProfile',state.runProfile);
                 rois(condition) = ssdot.io.roiFromIndices(surface,indices,nonRoi,"Auto ROI: condition "+names(condition),source);
@@ -755,7 +858,7 @@ classdef AppController < handle
             if isempty(state.result), status = "none"; return; end
             analysis = state.roiAnalysis;
             if isempty(analysis) || analysis.resultKey~=resultKey(state.result), status = "missing"; return; end
-            if ~isequal(analysis.settings,obj.roiSettings), status = "stale"; else, status = "current"; end
+            if ~isequal(completeRoiSettings(analysis.settings),completeRoiSettings(obj.roiSettings)), status = "stale"; else, status = "current"; end
         end
         function counts = roiCounts(obj,state)
             counts = zeros(1,0);
@@ -784,7 +887,7 @@ classdef AppController < handle
             glms = arrayfun(@(node)ssdot.io.readHomerGlm(node),obj.runs);
             found = find([glms.found]);
             if isempty(found)
-                obj.homerGlmNote = "The Homer processing stream has no hmrR_GLM call; temporal settings come from the profile.";
+                obj.homerGlmNote = "The Homer processing stream has no hmrR_GLM call.";
                 return;
             end
             reference = glms(found(1)); fields = ["trange","idxBasis","paramsBasis","rhoSD_ssThresh","driftOrder"];
@@ -792,7 +895,7 @@ classdef AppController < handle
             scope = sprintf('all %d recordings',numel(obj.runs));
             if numel(found)<numel(obj.runs), scope = sprintf('%d of %d recordings',numel(found),numel(obj.runs)); end
             if ~consistent
-                obj.homerGlmNote = "Homer hmrR_GLM settings differ between recordings; they are shown per recording in the Log and not offered as one setting.";
+                obj.homerGlmNote = "Homer hmrR_GLM settings differ between recordings; they are listed per recording in the Log.";
                 for index = found
                     obj.log(sprintf('%s hmrR_GLM: trange %s, idxBasis %g, paramsBasis %s, rhoSD_ssThresh %g, driftOrder %g.', ...
                         obj.runs(index).name,mat2str(glms(index).trange),glms(index).idxBasis,mat2str(glms(index).paramsBasis), ...
@@ -806,6 +909,15 @@ classdef AppController < handle
             if reference.idxBasis~=2 || numel(reference.paramsBasis)~=6
                 obj.homerGlmNote = obj.homerGlmNote+" This basis type is not supported by the SS-DOT reconstruction (modified gamma, 6 parameters, only).";
             end
+            % Homer flagNuisanceRMethod: 0 nearest, 1 highest correlation, 2 average of all short channels, 3 tCCA.
+            % The SS-DOT reconstruction regresses the average of all short channels (method 2).
+            if ~isempty(reference.flagNuisanceRMethod) && reference.flagNuisanceRMethod~=2
+                methods = ["nearest short channel","most correlated short channel","average of all short channels","tCCA"];
+                used = "method "+reference.flagNuisanceRMethod;
+                if any(reference.flagNuisanceRMethod==0:3), used = methods(reference.flagNuisanceRMethod+1); end
+                obj.homerGlmNote = obj.homerGlmNote+" Homer regressed short channels by "+used+ ...
+                    "; the SS-DOT reconstruction always uses the average of all short channels, so this choice is not transferred.";
+            end
             obj.log(obj.homerGlmNote);
         end
         function config = homerGlmConfig(obj)
@@ -814,10 +926,6 @@ classdef AppController < handle
             config.temporalRange = glm.trange(:)'; config.temporalParameters = glm.paramsBasis(:)';
             config.shortSeparationThreshold = glm.rhoSD_ssThresh; config.driftOrder = glm.driftOrder;
         end
-        function result = canApplyHomerGlm(obj)
-            result = ~obj.busy && ~isempty(obj.homerGlm) && obj.homerGlm.idxBasis==2 && numel(obj.homerGlm.paramsBasis)==6 && ...
-                ~sameConfig(obj.homerGlmConfig(),obj.config);
-        end
         function text = homerGlmDifference(obj)
             text = "";
             if isempty(obj.homerGlm) || obj.homerGlm.idxBasis~=2 || numel(obj.homerGlm.paramsBasis)~=6, return; end
@@ -825,23 +933,11 @@ classdef AppController < handle
             labels = ["time range","gamma parameters","short-separation threshold","drift order"];
             differs = arrayfun(@(name)~isequal(double(target.(name)),double(obj.config.(name))),names);
             if any(differs)
-                text = " Current settings differ in: "+strjoin(labels(differs),", ")+". Settings > Use these applies them.";
+                text = " Current settings differ in: "+strjoin(labels(differs),", ")+". Change them in Settings to use Homer's values.";
             else
                 text = " Current settings match these.";
             end
         end
-        function applyHomerGlm(obj)
-            assert(~obj.busy,'SSDOT:Busy','Settings are locked during an analysis.');
-            assert(~isempty(obj.homerGlm),'SSDOT:NoHomerGlm','The open dataset has no consistent Homer hmrR_GLM settings.');
-            assert(obj.homerGlm.idxBasis==2 && numel(obj.homerGlm.paramsBasis)==6,'SSDOT:HomerBasis', ...
-                'Homer basis type %g is not supported by the SS-DOT reconstruction.',obj.homerGlm.idxBasis);
-            config = obj.homerGlmConfig(); obj.validateConfig(config);
-            obj.config = config; obj.profile = "custom"; obj.app.profileDropDown.Value = 'custom';
-            obj.app.refreshSettings(obj.config);
-            obj.settingsChanged('Applied the dataset''s Homer hmrR_GLM timing to the workspace settings');
-        end
-
-        %% Status and readiness
         function current = isCurrent(obj,state)
             current = ~isempty(state.result) && sameConfig(state.config,obj.config) && ...
                 string(state.atlasFile)==string(obj.atlasFile) && string(state.forwardFolder)==string(obj.forwardFolder);
@@ -868,8 +964,6 @@ classdef AppController < handle
             end
             obj.app.recordingTable.Data = data;
             report = obj.readiness(); obj.app.readinessLabel.Text = char(report.message);
-            obj.app.homerGlmLabel.Text = char(obj.homerGlmNote+obj.homerGlmDifference());
-            if isempty(obj.runs), obj.app.homerGlmLabel.Text = 'Open a dataset to read its Homer hmrR_GLM settings.'; end
             if isempty(obj.runs)
                 obj.app.overviewSummary.Text = 'No dataset open.';
             else
@@ -1017,8 +1111,13 @@ classdef AppController < handle
             if numel(names)~=count, names = string(1:count); end
         end
         function renderView(obj)
-            if isempty(obj.selectedNode), obj.showRoiPlaceholder('Open a dataset, then press Run Analysis to calculate ROIs.'); return; end
-            state = obj.stateForNode(obj.selectedNode); active = obj.app.tabGroup.SelectedTab;
+            % A displayed result (e.g. one handed to showResult) renders even without a selected node.
+            if isempty(obj.selectedNode) && isempty(obj.displayedState)
+                obj.showRoiPlaceholder('Open a dataset, then press Run Analysis to calculate ROIs.'); return;
+            end
+            active = obj.app.tabGroup.SelectedTab;
+            if isempty(obj.selectedNode), state = obj.displayedState; else, state = obj.stateForNode(obj.selectedNode); end
+            if isempty(obj.selectedNode) && any(active==[obj.app.tabs.signals obj.app.tabs.model]), return; end
             if active==obj.app.tabs.signals, obj.renderSignals();
             elseif active==obj.app.tabs.model
                 if obj.busy, return; end
@@ -1030,8 +1129,6 @@ classdef AppController < handle
                 if obj.busy, return; end
                 if ~isempty(obj.displayedState), state = obj.displayedState; end
                 obj.renderRoi(state);
-            elseif active==obj.app.tabs.average
-                if ~isempty(obj.app.averageViewer) && isvalid(obj.app.averageViewer), obj.app.averageViewer.refresh(); end
             end
         end
         function renderRoi(obj,state)
@@ -1054,21 +1151,25 @@ classdef AppController < handle
         end
         function renderSignals(obj)
             view = obj.app.signals; kind = string(view.kind.Value);
+            if ~isa(obj.selectedNode,'RunClass')
+                view.average.Enable = 'off'; view.condition.Enable = 'off';
+                obj.showUnavailableSignal(view,"Signals belong to individual recordings. Choose a recording in the Shown list."); return;
+            end
             available = obj.updateSignalAvailability(view,kind);
             if ~available, obj.showUnavailableSignal(view,view.notice.Text); return; end
             ml = obj.selectedNode.acquired.GetMeasList(); pairs = unique(ml(:,1:2),'rows','stable'); pair = pairs(view.channel.Value,:);
             signals = view.signal.Value; if signals==0, signals = 1:numel(obj.selectedNode.acquired.probe.wavelengths); end
-            condition = ""; if ~isempty(obj.selectedNode.CondNames), condition = string(obj.selectedNode.CondNames{1}); end
+            condition = string(view.condition.Value);
             try
                 series = ssdot.io.extractTimeSeries(obj.selectedNode,kind,view.average.Value,pair(1),pair(2),signals,condition);
             catch exception
                 if ~strcmp(exception.identifier,'SSDOT:MissingSeries'), rethrow(exception); end
                 obj.showUnavailableSignal(view,exception.message); return;
             end
-            cla(view.axes,'reset'); ssdot.viz.plotSignals(view.axes,series);
-            if ~view.average.Value, ssdot.viz.plotStimuli(view.axes,ssdot.io.readStimuli(obj.selectedNode),obj.selectedNode.iRun,kind=="Raw data"); end
+            ax = obj.app.signalAxes(); cla(ax,'reset'); ssdot.viz.plotSignals(ax,series);
+            if ~view.average.Value, ssdot.viz.plotStimuli(ax,ssdot.io.readStimuli(obj.selectedNode),obj.selectedNode.iRun,kind=="Raw data"); end
             label = "Optical density"; if kind=="Raw data", label = "Raw intensity"; end
-            ylabel(view.axes,label); hold(view.axes,'off');
+            ylabel(ax,label); hold(ax,'off');
         end
         function available = updateSignalAvailability(obj,view,kind)
             continuous = ssdot.io.signalRepresentation(obj.selectedNode,kind,false);
@@ -1085,11 +1186,12 @@ classdef AppController < handle
                 view.average.Tooltip = 'Show the averaged HRF already stored in the Homer results.';
             end
             available = hasContinuous || hasAverage;
+            view.condition.Enable = matlab.lang.OnOffSwitchState(view.average.Value && numel(view.condition.ItemsData)>1 && ~obj.busy);
             label = "optical density"; if kind=="Raw data", label = "raw intensity"; end
             if ~available
                 view.notice.Text = 'This recording contains no stored '+label+'.';
             elseif view.average.Value
-                condition = "unspecified"; if ~isempty(obj.selectedNode.CondNames), condition = string(obj.selectedNode.CondNames{1}); end
+                condition = string(view.condition.Value); if strlength(condition)==0, condition = "unspecified"; end
                 view.notice.Text = 'Stored averaged '+label+' for condition '+condition+'.';
             elseif kind=="OD" && ~hasAverage
                 view.notice.Text = 'Stored continuous optical density. No stored average HRF (Homer results contain no dodAvg).';
@@ -1097,9 +1199,9 @@ classdef AppController < handle
                 view.notice.Text = 'Stored continuous '+label+'.';
             end
         end
-        function showUnavailableSignal(~,view,message)
-            cla(view.axes,'reset'); axis(view.axes,'off');
-            text(view.axes,0.5,0.5,string(message),'Units','normalized','HorizontalAlignment','center','Interpreter','none');
+        function showUnavailableSignal(obj,view,message)
+            ax = obj.app.signalAxes(); cla(ax,'reset'); axis(ax,'off');
+            text(ax,0.5,0.5,string(message),'Units','normalized','HorizontalAlignment','center','Interpreter','none');
             view.notice.Text = string(message);
         end
         function renderResult(obj,state)
@@ -1113,15 +1215,50 @@ classdef AppController < handle
             names = obj.conditionNames(state);
             condition = obj.app.conditionDropDown.Value;
             if ~isnumeric(condition) || condition<1 || condition>numel(names), condition = 1; end
-            hb = lower(string(obj.app.chromophoreDropDown.Value)); values = state.result.(hb)(:,condition);
-            limits = obj.colorLimits(values);
-            ssdot.viz.plotReconstruction(obj.app.resultAxes,state.atlas,values,limits,string(obj.app.chromophoreDropDown.Value));
-            obj.app.resultLabel.Text = char(resultDescription(obj,state,names(condition),limits));
+            chromophore = string(obj.app.chromophoreDropDown.Value); hb = lower(chromophore);
+            statistics = resultStatistics(state);
+            map = obj.selectedMap(statistics);
+            scale = string(obj.app.scaleDropDown.Value);
+            switch map
+                case "T value"
+                    % The original fixed concentration range is meaningless for t; use automatic unless custom.
+                    limit = []; if startsWith(scale,"Custom"), limit = obj.app.colorLimitField.Value; end
+                    shown = ssdot.viz.statisticDisplay("t",statistics.(hb).t(:,condition),limit);
+                    note = string(sprintf('T value: one-sample t-test against zero across %d %s, df = %d', ...
+                        statistics.recordings,averageKind(state),statistics.degreesOfFreedom));
+                case "P value"
+                    correction = string(obj.app.correctionDropDown.Value);
+                    p = ssdot.recon.adjustPValues(statistics.(hb).p(:,condition),correction);
+                    shown = ssdot.viz.statisticDisplay("p",p,obj.app.significanceField.Value);
+                    note = string(sprintf('P value: two-sided, %s; p < %.3g colored, others gray', ...
+                        correctionText(correction),obj.app.significanceField.Value));
+                otherwise
+                    values = state.result.(hb)(:,condition);
+                    shown = struct('values',values,'limits',obj.colorLimits(values),'colors',[],'undefined',0); note = "";
+            end
+            if map~="P value", shown.colors = ssdot.viz.mapColormap(obj.app.colormapDropDown.Value); end
+            if shown.undefined>0
+                note = note+sprintf('; %d vertices with no between-recording variation shown neutral',shown.undefined);
+            end
+            heading = chromophore; if map~="Concentration change", heading = chromophore+" "+map; end
+            ssdot.viz.plotReconstruction(obj.app.resultAxes,state.atlas,shown.values,shown.limits,heading,shown.colors);
+            obj.app.resultLabel.Text = char(resultDescription(obj,state,names(condition),shown.limits,note,map));
+        end
+        function map = selectedMap(obj,statistics)
+            %SELECTEDMAP T and P maps exist only for averages of two or more recordings.
+            available = ~isempty(statistics);
+            obj.app.mapDropDown.Enable = matlab.lang.OnOffSwitchState(available);
+            if ~available, obj.app.mapDropDown.Value = 'Concentration change'; end
+            map = string(obj.app.mapDropDown.Value);
+            obj.app.significanceField.Enable = matlab.lang.OnOffSwitchState(map=="P value");
+            obj.app.correctionDropDown.Enable = matlab.lang.OnOffSwitchState(map=="P value");
+            obj.app.scaleDropDown.Enable = matlab.lang.OnOffSwitchState(map~="P value");
+            obj.app.colormapDropDown.Enable = matlab.lang.OnOffSwitchState(map~="P value");
+            obj.app.colorLimitField.Enable = matlab.lang.OnOffSwitchState(map~="P value" && startsWith(string(obj.app.scaleDropDown.Value),"Custom"));
         end
         function limits = colorLimits(obj,values)
             %COLORLIMITS Display-only symmetric limits: fixed original, automatic or custom.
             scale = string(obj.app.scaleDropDown.Value);
-            obj.app.colorLimitField.Enable = matlab.lang.OnOffSwitchState(startsWith(scale,"Custom"));
             limits = [-1 1]*1e-9;
             if startsWith(scale,"Auto"), peak = max(abs(values)); if peak>0, limits = [-peak peak]; end
             elseif startsWith(scale,"Custom"), limits = [-1 1]*obj.app.colorLimitField.Value; end
@@ -1167,6 +1304,7 @@ classdef AppController < handle
         function prepareModelView(obj)
             %PREPAREMODELVIEW Explicit read of atlas and sensitivity for inspection; no reconstruction.
             assert(~isempty(obj.selectedNode),'SSDOT:NoSelection','Open a dataset first.');
+            assert(isa(obj.selectedNode,'RunClass'),'SSDOT:NoRecording','Model inputs are read for a recording. Choose a recording in the Shown list.');
             state = obj.stateForNode(obj.selectedNode);
             if isempty(state.result), obj.adoptWorkspaceSettings(state); end
             obj.beginWork(); cleanup = onCleanup(@()obj.finishWork());
@@ -1194,9 +1332,20 @@ classdef AppController < handle
             for format = ["png","pdf","fig"], if options.(format), options.formats(end+1) = format; end; end
             assert(~isempty(options.formats),'SSDOT:ExportFormat','Choose an export format in Settings > Figure export.');
             assert(any([options.maps options.temporal options.kernels options.rois options.inputViews]),'SSDOT:ExportContent','Choose at least one figure type in Settings > Figure export.');
-            options.autoColor = startsWith(string(obj.app.scaleDropDown.Value),"Auto"); options.showNonRoi = true;
-            options.colorLimit = [];
-            if startsWith(string(obj.app.scaleDropDown.Value),"Custom"), options.colorLimit = obj.app.colorLimitField.Value; end
+            % Export uses the display choices of the Results and ROI tabs.
+            options.autoColor = startsWith(string(obj.app.scaleDropDown.Value),"Auto");
+            options.showNonRoi = true;
+            viewer = obj.app.roiViewer;
+            if ~isempty(viewer) && isvalid(viewer), options.showNonRoi = logical(viewer.showNonRoi.Value); end
+            options.colorLimit = []; options.statisticColorLimit = [];
+            % The custom limit belongs to the map type shown in Results; the other type keeps its default range.
+            if startsWith(string(obj.app.scaleDropDown.Value),"Custom")
+                if string(obj.app.mapDropDown.Value)=="T value", options.statisticColorLimit = obj.app.colorLimitField.Value;
+                else, options.colorLimit = obj.app.colorLimitField.Value; end
+            end
+            options.significance = obj.app.significanceField.Value;
+            options.correction = string(obj.app.correctionDropDown.Value);
+            options.colormap = string(obj.app.colormapDropDown.Value);
             if string(options.scope)=="selected", assert(~isempty(obj.selectedNode),'SSDOT:NoSelection','Select a recording to export.'); end
             states = {}; inputFolders = string(obj.datasetRoot);
             for state = obj.allStates()
@@ -1331,7 +1480,14 @@ classdef AppController < handle
             name = string(session.nodeName);
             if strlength(name)>0
                 index = find(string({obj.runs.name})==name,1);
-                assert(~isempty(index),'SSDOT:SessionNode','This session belongs to recording %s, which is not in the open dataset.',name);
+                if isempty(index)
+                    % A saved average: show it among the averages.
+                    position = find(cellfun(@(node)string(node.name)==name,obj.averageNodes),1);
+                    assert(~isempty(position),'SSDOT:SessionNode','This session belongs to %s, which is not in the open dataset.',name);
+                    average = obj.stateForNode(obj.averageNodes{position});
+                    if ~any(arrayfun(@(state)state==average,obj.averageStates)), obj.averageStates(end+1) = average; end
+                    obj.refreshShownList(); index = obj.shownIndex(average.node);
+                end
                 if index~=obj.app.recordingDropDown.Value, obj.app.recordingDropDown.Value = index; obj.selectRecording(); end
             end
             state = obj.stateForNode(obj.selectedNode);
@@ -1347,9 +1503,7 @@ classdef AppController < handle
             end
             % The session's settings become the workspace settings so its result is current.
             obj.config = stripRuntime(state.config); obj.profile = state.runProfile; obj.previewDerived = state.previewDerived;
-            if ~any(obj.profile==["research","preview","custom"]), obj.profile = "custom"; end
-            obj.app.profileDropDown.Value = char(obj.profile); obj.app.deviceDropDown.Value = char(string(obj.config.device));
-            obj.app.refreshSettings(obj.config);
+            obj.refreshSettingControls(); obj.rememberSettings();
             if isfile(state.atlasFile) && isfile(fullfile(state.forwardFolder,'fw','Adot.mat'))
                 obj.atlasFile = string(state.atlasFile); obj.forwardFolder = string(state.forwardFolder);
                 obj.app.atlasPath.Value = char(obj.atlasFile); obj.app.forwardPath.Value = char(obj.forwardFolder);
@@ -1364,10 +1518,99 @@ classdef AppController < handle
         end
 
         %% Averages
-        function openAverage(obj)
-            obj.destroyAverageViewer();
-            if isempty(obj.averageNodes) || obj.app.averageNode.Value<1, return; end
-            obj.app.averageViewer = ssdot.app.AverageWindow(obj,obj.averageNodes{obj.app.averageNode.Value},obj.app.averageHost);
+        function setAveragesEnabled(obj,enabled)
+            %SETAVERAGESENABLED Averaging is cheap (no reconstruction): apply the choice immediately.
+            assert(~obj.busy,'SSDOT:Busy','Settings are locked during an analysis.');
+            obj.averagesEnabled = logical(enabled); obj.rememberSettings();
+            if obj.averagesEnabled
+                count = obj.updateAverages();
+                obj.log(sprintf('Averages enabled: %d average(s) calculated from current results.',count));
+            else
+                for state = obj.averageStates, state.result = []; state.roiAnalysis = []; state.status = "Waiting"; end
+                obj.averageStates = ssdot.app.ReconstructionState.empty;
+                if ~isempty(obj.selectedNode) && ~isa(obj.selectedNode,'RunClass'), obj.selectedNode = []; end
+                obj.refreshShownList(); obj.selectRecording();
+                obj.log('Averages disabled; averages removed from the Shown list.');
+            end
+            obj.app.updateActions();
+        end
+        function count = updateAverages(obj)
+            %UPDATEAVERAGES Mean, T and P values of current results at every level with two or more members.
+            % A session averages its recordings, a subject its sessions and a group its subjects.
+            % A level with a single member passes that member's result on unchanged.
+            obj.averageStates = ssdot.app.ReconstructionState.empty;
+            for index = 1:numel(obj.group), obj.averageFor(obj.group(index)); end
+            count = numel(obj.averageStates);
+            obj.trimResults(); obj.refreshShownList();
+            if ~isempty(obj.selectedNode) && ~isa(obj.selectedNode,'RunClass')
+                state = obj.stateForNode(obj.selectedNode);
+                if isempty(state.result), obj.app.clearDataViews(); else, obj.showResult(state,false); end
+            end
+            obj.refreshRecordingStatuses();
+        end
+        function source = averageFor(obj,node)
+            source = ssdot.app.ReconstructionState.empty;
+            if isa(node,'RunClass')
+                state = obj.stateForNode(node);
+                % A result moved out of memory is read back from the disk cache.
+                if isempty(state.result) && strlength(state.cacheKey)>0 && ~isempty(state.atlas), obj.restoreResult(state); end
+                if obj.isCurrent(state), source = state; end
+                return;
+            end
+            children = ssdot.io.nodeChildren(node);
+            sources = ssdot.app.ReconstructionState.empty;
+            for index = 1:numel(children), sources = [sources obj.averageFor(children(index))]; end %#ok<AGROW>
+            state = obj.stateForNode(node);
+            if numel(sources)<2
+                state.result = []; state.roiAnalysis = []; state.status = "Waiting";
+                if isscalar(sources), source = sources; end
+                return;
+            end
+            try
+                obj.buildAverage(state,sources);
+                obj.averageStates(end+1) = state; source = state;
+            catch exception
+                state.result = []; state.roiAnalysis = []; state.status = "Failed"; state.message = string(exception.message);
+                obj.log("Average of "+state.nodeName+" not calculated: "+string(exception.message));
+            end
+        end
+        function buildAverage(obj,state,sources)
+            %BUILDAVERAGE Mean of the sources' results, conditions matched by name, with T/P values for two or more.
+            reference = sources(1); referenceMesh = ssdot.io.surfaceFromAtlas(reference.atlas);
+            for source = sources
+                assert(ssdot.io.surfaceFromAtlas(source.atlas).meshId==referenceMesh.meshId,'SSDOT:MeshMismatch','Members use different meshes.');
+                assert(sameConfig(source.config,reference.config) && source.runProfile==reference.runProfile && source.previewDerived==reference.previewDerived, ...
+                    'SSDOT:AverageConfiguration','Members were computed with different settings.');
+            end
+            [common,columns,omitted] = ssdot.app.matchConditions(arrayfun(@conditionNamesOf,sources,'UniformOutput',false), ...
+                arrayfun(@(source)source.nodeName,sources));
+            results = struct('hbo',{},'hbr',{});
+            for k = 1:numel(sources)
+                use = columns{k}; if isempty(use), use = 1:size(sources(k).result.hbo,2); end
+                results(end+1) = struct('hbo',sources(k).result.hbo(:,use),'hbr',sources(k).result.hbr(:,use)); %#ok<AGROW>
+            end
+            result = ssdot.recon.averageResults(results);
+            if numel(results)>=2, result.statistics = ssdot.recon.groupStatistics(results); end
+            state.atlas = reference.atlas; state.atlasFile = reference.atlasFile; state.forwardFolder = reference.forwardFolder;
+            state.applyConfig(reference.config); state.runProfile = reference.runProfile; state.previewDerived = reference.previewDerived;
+            names = arrayfun(@(source)source.nodeName,sources);
+            kinds = struct('RunClass',"recordings",'SessClass',"sessions",'SubjClass',"subjects",'GroupClass',"groups");
+            kind = "members"; if isfield(kinds,class(sources(1).node)), kind = kinds.(class(sources(1).node)); end
+            provenance = struct();
+            if isfield(reference.result,'provenance'), provenance = reference.result.provenance; end
+            for field = ["inputFingerprint","omittedConditions","sourceRecordings"]
+                if isfield(provenance,field), provenance = rmfield(provenance,field); end
+            end
+            provenance.aggregation = "Arithmetic mean"; provenance.sourceRecordings = names; provenance.sourceKind = kind;
+            provenance.sourceDevices = arrayfun(@(source)string(source.config.device),sources);
+            if numel(unique(provenance.sourceDevices))>1, provenance.device = "mixed"; end
+            provenance.recording = state.nodeName;
+            if ~isempty(common), provenance.conditionNames = cellstr(common); end
+            provenance.omittedConditions = omitted;
+            result.provenance = provenance;
+            state.result = result; state.status = "Completed";
+            obj.finishAverage(state,sources);
+            state.message = sprintf('Average of %d %s.',numel(sources),kind);
         end
         function finishAverage(obj,state,sources)
             %FINISHAVERAGE ROI for an average only when every source used the same brain mask.
@@ -1380,7 +1623,6 @@ classdef AppController < handle
                 obj.log(state.nodeName+": averaged ROI not calculated because source brain masks differ or are unavailable.");
             end
             obj.log(sprintf('Averaged %d result(s) for %s.',numel(sources),state.nodeName));
-            obj.showResult(state); obj.app.updateActions();
         end
 
         %% Helpers
@@ -1402,28 +1644,52 @@ classdef AppController < handle
             if ~isempty(obj.app.roiViewer) && isvalid(obj.app.roiViewer), delete(obj.app.roiViewer); end
             obj.app.roiViewer = [];
         end
-        function destroyAverageViewer(obj)
-            if ~isempty(obj.app.averageViewer) && isvalid(obj.app.averageViewer), delete(obj.app.averageViewer); end
-            obj.app.averageViewer = [];
-        end
     end
 end
 
-function text = resultDescription(obj,state,conditionName,limits)
+function kind = averageKind(state)
+    kind = "recordings";
+    if isfield(state.result,'provenance') && isfield(state.result.provenance,'sourceKind'), kind = string(state.result.provenance.sourceKind); end
+end
+
+function text = averageLabel(state)
+    %AVERAGELABEL Shown-list entry for an average.
+    provenance = state.result.provenance;
+    text = "Average: "+state.nodeName+" ("+numel(provenance.sourceRecordings)+" "+provenance.sourceKind+")";
+end
+
+function names = conditionNamesOf(state)
+    %CONDITIONNAMESOF Condition names stored with a result; empty when not recorded.
+    names = strings(1,0);
+    if isfield(state.result,'provenance') && isfield(state.result.provenance,'conditionNames')
+        names = reshape(string(state.result.provenance.conditionNames),1,[]);
+    end
+end
+
+function text = resultDescription(obj,state,conditionName,limits,note,map)
+    if nargin<5, note = ""; end
+    if nargin<6, map = "Concentration change"; end
     profileName = state.runProfile;
     if isfield(state.result,'provenance') && isfield(state.result.provenance,'profile'), profileName = string(state.result.provenance.profile); end
-    parts = [state.nodeName,"condition "+conditionName,upper(string(profileName))+" profile"];
+    parts = [state.nodeName,"condition "+conditionName];
     % Averages and restored sessions keep temporal provenance in the result, not a basis object.
     [mode,gamma] = temporalSummary(state);
-    if strlength(mode)>0, parts(end+1) = "temporal "+mode; end
+    % Only results from older sessions used the former event-duration convention.
+    if mode=="durationBased", parts(end+1) = "older event-duration temporal convention"; end
     if strlength(gamma)>0, parts(end+1) = "gamma ["+gamma+"] s"; end
-    parts(end+1) = sprintf('color range [%.3g, %.3g] (display only)',limits(1),limits(2));
+    if strlength(note)>0, parts(end+1) = string(note); end
+    if map~="P value", parts(end+1) = sprintf('color range [%.3g, %.3g] (display only)',limits(1),limits(2)); end
     text = strjoin(parts," | ");
     switch state.origin
         case "average"
             count = 0;
             if isfield(state.result,'provenance') && isfield(state.result.provenance,'sourceRecordings'), count = numel(state.result.provenance.sourceRecordings); end
-            text = "AVERAGE of "+count+" recording(s) | "+text;
+            kind = "recording(s)";
+            if isfield(state.result,'provenance') && isfield(state.result.provenance,'sourceKind'), kind = string(state.result.provenance.sourceKind); end
+            text = "AVERAGE of "+count+" "+kind+" | "+text;
+            if isfield(state.result,'provenance') && isfield(state.result.provenance,'omittedConditions') && ~isempty(state.result.provenance.omittedConditions)
+                text = text+" | left out (not in every recording): "+strjoin(string(state.result.provenance.omittedConditions),"; ");
+            end
         case "session"
             text = "RESTORED SESSION (not recomputed) | "+text;
     end
@@ -1431,6 +1697,31 @@ function text = resultDescription(obj,state,conditionName,limits)
     preview = state.previewDerived || profileName=="preview";
     if isfield(state.result,'provenance') && isfield(state.result.provenance,'preview'), preview = preview || state.result.provenance.preview; end
     if preview, text = "COARSE SOFTWARE PREVIEW | "+text; end
+end
+
+function settings = completeRoiSettings(settings)
+    %COMPLETEROISETTINGS ROI settings saved before the signal choice used the HbO rule.
+    defaults = ssdot.app.defaultRoiSettings();
+    for name = string(fieldnames(defaults))'
+        if ~isfield(settings,name), settings.(name) = defaults.(name); end
+    end
+    settings.signal = string(settings.signal);
+end
+
+function text = correctionText(method)
+    switch string(method)
+        case "fdr", text = "FDR-adjusted (Benjamini-Hochberg) across vertices";
+        case "bonferroni", text = "Bonferroni-adjusted across vertices";
+        otherwise, text = "uncorrected for multiple comparisons";
+    end
+end
+
+function statistics = resultStatistics(state)
+    %RESULTSTATISTICS Between-recording T/P values stored with an average, if any.
+    statistics = [];
+    if isstruct(state.result) && isfield(state.result,'statistics') && ~isempty(state.result.statistics)
+        statistics = state.result.statistics;
+    end
 end
 
 function [mode,gamma] = temporalSummary(state)

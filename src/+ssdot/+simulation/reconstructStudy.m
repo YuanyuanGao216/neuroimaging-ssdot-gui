@@ -15,7 +15,7 @@ function reconstructStudy(cfg)
     groupFolder = dir(fullfile(cfg.savepath_rs,'Subj*'));
     subjectFolder =  setdiff({groupFolder([groupFolder.isdir]).name},{'.','..'});
 
-    nVertexBrain = 20004;
+    nVertexBrain = size(brainVertices,1);
     imageFolder = 'image';
     nSubject = numel(subjectFolder);
     fprintf('In folder %s\n Detect %d subject folders\n', cfg.savepath_rs, nSubject)

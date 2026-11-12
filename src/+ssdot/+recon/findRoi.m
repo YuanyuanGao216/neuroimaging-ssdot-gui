@@ -29,13 +29,15 @@ function [indexROI, indexNonROI] = findRoi(hbOSZero,hbRSZero, M, brainVertices, 
 
         axesOrder = [2,1,3];
         indexPerturbation = [];
+        radius = 15; % Simulation perturbation radius (mm) unless cfg.roiRadius is given.
+        if isfield(cfg,'roiRadius'), radius = cfg.roiRadius; end
 
         for i = 1:size(cfg.center,1)
             perturbationCenter = cfg.center(i,:);
             distance = sqrt((brainVertices(:,axesOrder(1)) - perturbationCenter(1)).^2 + ...
                 (brainVertices(:,axesOrder(2)) - perturbationCenter(2)).^2 + ...
                 (brainVertices(:,axesOrder(3)) - perturbationCenter(3)).^2);
-            indexPerturbation = [indexPerturbation; find(distance<15)];
+            indexPerturbation = [indexPerturbation; find(distance<radius)];
         end
         indexROI = indexPerturbation;
         indexNonROI = setdiff(M.mask_brain, indexPerturbation);

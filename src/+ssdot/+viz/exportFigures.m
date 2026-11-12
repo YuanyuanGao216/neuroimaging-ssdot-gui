@@ -16,8 +16,15 @@ function report = exportFigures(data,folder,options,progress)
             surface=ssdot.io.surfaceFromAtlas(data.atlas);
             assert(size(data.result.hbo,1)==size(surface.vertices,1) && isequal(size(data.result.hbo),size(data.result.hbr)), ...
                 'SSDOT:ResultSize','Result arrays do not match the forward mesh.');
+            statistics=isfield(data.result,'statistics') && ~isempty(data.result.statistics);
             for index=1:size(data.result.hbo,2)
                 add('hbo',index,sprintf('hbo_condition-%03d',index)); add('hbr',index,sprintf('hbr_condition-%03d',index));
+                if statistics
+                    for hb=["hbo","hbr"]
+                        add(hb+"-t",index,sprintf('%s-tvalue_condition-%03d',hb,index));
+                        add(hb+"-p",index,sprintf('%s-pvalue_condition-%03d',hb,index));
+                    end
+                end
             end
         end
     end
@@ -43,7 +50,9 @@ function report = exportFigures(data,folder,options,progress)
         if ~isfield(data.atlas,'probe'), skip('No registered probe available.'); else, add('probe',0,'registered-probe'); end
     end
     if isempty(jobs), return; end
-    fig=figure('Visible','off','HandleVisibility','off','Color','white','Position',[100 100 1200 700], ...
+    figureSize=[1200 700]; % Default export size (pixels); options.width/height override it.
+    if isfield(options,'width') && isfield(options,'height'), figureSize=[options.width options.height]; end
+    fig=figure('Visible','off','HandleVisibility','off','Color','white','Position',[100 100 figureSize], ...
         'MenuBar','none','ToolBar','none','NumberTitle','off','Name','SS-DOT figure export');
     cleanup=onCleanup(@()delete(fig));
     completed=0; total=numel(jobs)*numel(formats);
@@ -58,9 +67,25 @@ function report = exportFigures(data,folder,options,progress)
                 values=data.result.(job.kind)(:,job.index); limits=[-1 1]*1e-9;
                 if options.autoColor, peak=max(abs(values)); if peak>0, limits=[-peak peak]; end; end
                 if isfield(options,'colorLimit') && ~isempty(options.colorLimit), limits=[-1 1]*options.colorLimit; end
-                ssdot.viz.plotReconstruction(axesPair,data.atlas,values,limits,hb);
+                ssdot.viz.plotReconstruction(axesPair,data.atlas,values,limits,hb,colors());
                 descriptor=ssdot.io.surfaceFromAtlas(data.atlas); condition=conditionName(job.index);
                 titleText=hb+" / "+condition;
+            case {"hbo-t","hbr-t","hbo-p","hbr-p"}
+                parts=split(string(job.kind),"-"); field=parts(1); statistic=parts(2);
+                hb="HbO"; if field=="hbr", hb="HbR"; end
+                stats=data.result.statistics;
+                if statistic=="t"
+                    limit=[]; if isfield(options,'statisticColorLimit'), limit=options.statisticColorLimit; end
+                    shown=ssdot.viz.statisticDisplay("t",stats.(field).t(:,job.index),limit); label="T value";
+                    shown.colors=colors();
+                else
+                    p=ssdot.recon.adjustPValues(stats.(field).p(:,job.index),correction());
+                    shown=ssdot.viz.statisticDisplay("p",p,significance()); label="P value";
+                end
+                ssdot.viz.plotReconstruction(axesPair,data.atlas,shown.values,shown.limits,hb+" "+label,shown.colors);
+                limits=shown.limits; descriptor=ssdot.io.surfaceFromAtlas(data.atlas); condition=conditionName(job.index);
+                titleText=hb+" "+label+" / "+condition+sprintf(' / one-sample t-test, %d recordings',stats.recordings);
+                if statistic=="p", titleText=titleText+sprintf(' / p < %.3g colored, %s',significance(),correctionLabel()); end
             case "temporal"
                 ssdot.viz.plotTemporalBasis(axesPair,data.temporal); twoDimensional=true;
             case {"brain-kernels","scalp-kernels"}
@@ -116,6 +141,25 @@ function report = exportFigures(data,folder,options,progress)
     end
     function add(kind,index,name), jobs(end+1)=struct('kind',char(kind),'index',index,'name',name); end
     function skip(message), report.skipped(end+1)=string(message); end
+    function method=correction()
+        method="none"; if isfield(options,'correction') && strlength(string(options.correction))>0, method=string(options.correction); end
+    end
+    function text=correctionLabel()
+        switch correction()
+            case "fdr", text="FDR-adjusted";
+            case "bonferroni", text="Bonferroni-adjusted";
+            otherwise, text="uncorrected";
+        end
+    end
+    function map=colors()
+        name="jetNeutral"; % Original display colormap.
+        if isfield(options,'colormap') && strlength(string(options.colormap))>0, name=string(options.colormap); end
+        map=ssdot.viz.mapColormap(name);
+    end
+    function level=significance()
+        level=0.05; % Conventional default when the caller sets no significance level.
+        if isfield(options,'significance') && ~isempty(options.significance), level=options.significance; end
+    end
     function notify(message)
         if ~isempty(progress), progress(message,completed,total,report); end
     end

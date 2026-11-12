@@ -43,7 +43,7 @@ classdef ReconstructionState < handle
             previous = obj.config;
             obj.config = config;
             if ~isequaln(previous,config), obj.status="Waiting"; obj.cacheKey=""; end
-            if changed(previous, config, ["sensitivityThreshold", "spatialRegularization", "longSeparationThreshold"])
+            if changed(previous, config, ["sensitivityThreshold", "scalpSensitivityThreshold", "spatialRegularization", "normalizationDamping", "longSeparationThreshold"])
                 obj.sensitivity = [];
                 obj.spatialBasis = [];
                 obj.spatialCenters = [];
@@ -61,7 +61,7 @@ classdef ReconstructionState < handle
                 obj.observations = [];
                 obj.result = [];
             end
-            if changed(previous, config, ["alpha", "beta", "regularization", "device", "noiseVariance", "noise_variance", "reconstructionBackend", "normalMatrixLimitBytes"])
+            if changed(previous, config, ["alpha", "beta", "regularization", "device", "noiseVariance", "noise_variance", "reconstructionBackend", "normalMatrixLimitBytes", "mapTimePoint"])
                 obj.result = [];
             end
         end

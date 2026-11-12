@@ -25,7 +25,9 @@ function handle = plotSurface(ax, faces, vertices, values, options)
     light('Parent',ax,'Position',[50 2000 100]);
     light('Parent',ax,'Position',[50 -100 -100]);
     lighting(ax,'phong');
-    colors = jet(256); colors(127:129,:) = 0.8; colormap(ax,colors);
+    colors = jet(256); colors(127:129,:) = 0.8;
+    if isfield(options,'colormap') && ~isempty(options.colormap), colors = options.colormap; end
+    colormap(ax,colors);
     if ~isfield(options,'showColorbar') || options.showColorbar
         colorbar(ax);
     else

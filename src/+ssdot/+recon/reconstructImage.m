@@ -55,7 +55,8 @@ function result = reconstructImage(model, observations, config, progress)
         model.temporalBasis, b, 1, false, config.device);
     concentrations=ssdot.recon.applyOutputScaling(concentrations,model,config);
     projection = struct("T", model.temporalBasis, "M", model.masks, "Conc", concentrations);
-    [hbo, hbr] = ssdot.recon.projectToVertices(projection, model.vertexCount);
+    mapTimePoint = "hboPeak"; if isfield(config,'mapTimePoint'), mapTimePoint = config.mapTimePoint; end
+    [hbo, hbr] = ssdot.recon.projectToVertices(projection, model.vertexCount, mapTimePoint);
     times.recoveryAndProjection=toc(phase); diagnostics.timings=times;
     result = struct("hbo", hbo, "hbr", hbr, "coefficients", b, ...
         "normalVector", normalVector, "normalMatrix", normalMatrix, ...
