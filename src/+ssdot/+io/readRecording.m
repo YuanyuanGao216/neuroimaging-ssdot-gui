@@ -3,6 +3,7 @@ function recording = readRecording(filename)
     assert(isfile(filename), "SSDOT:MissingRecording", "Recording not found: %s", filename);
     acquired = SnirfClass(char(filename));
     assert(acquired.Error() == 0, "SSDOT:RecordingRead", "Unable to load %s.", filename);
+
     recording = struct("time", acquired.GetTime(), "intensity", acquired.GetDataTimeSeries(), ...
         "measurementList", acquired.GetMeasList());
     recording.stimuli = struct("name", {}, "events", {});
@@ -14,6 +15,7 @@ function recording = readRecording(filename)
     end
     recording.provenance = struct("sourceFile", string(filename), "sha256", ssdot.io.fileHash(filename), ...
         "role", "unclassified", "modified", false);
+
     assert(numel(recording.time) == size(recording.intensity, 1), ...
         "SSDOT:TimeSize", "Recording time and measurement dimensions differ.");
 end

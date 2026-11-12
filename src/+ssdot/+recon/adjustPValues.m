@@ -7,7 +7,9 @@ function adjusted = adjustPValues(p, method)
     adjusted = p;
     defined = find(isfinite(p));
     m = numel(defined);
-    if m==0 || method=="none", return; end
+    if m == 0 || method == "none"
+        return
+    end
     switch method
         case "bonferroni"
             adjusted(defined) = min(1, p(defined)*m);
@@ -15,9 +17,10 @@ function adjusted = adjustPValues(p, method)
             [sorted, order] = sort(p(defined));
             q = sorted(:).*m./(1:m)';
             q = min(1, flipud(cummin(flipud(q))));
-            values = zeros(m,1); values(order) = q;
-            adjusted(defined) = values;
+            qInInputOrder = zeros(m, 1);
+            qInInputOrder(order) = q;
+            adjusted(defined) = qInInputOrder;
         otherwise
-            error('SSDOT:PCorrection','Choose none, fdr or bonferroni.');
+            error('SSDOT:PCorrection', 'Choose none, fdr or bonferroni.');
     end
 end

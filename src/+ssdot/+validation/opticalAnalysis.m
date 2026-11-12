@@ -1,84 +1,165 @@
-function [fit,channelFit,components,optical,eventTable]=opticalAnalysis(result,r,o,f,b,s,probe,hemi,modeled,T)
-    n=f.channels; nt=f.timeCount; ni=f.imageColumns; ns=size(o.shortRegressors,2);
-    componentVectors=zeros(2*n*nt,6); labels=["BrainHbO","BrainHbR","ScalpHbO","ScalpHbR","ShortChannel","Drift"];
-    for p=1:4
-        only=zeros(size(b)); cols=f.offsets(p)+(1:f.parts(p).width); only(cols)=b(cols);
-        componentVectors(:,p)=ssdot.recon.applyFactorizedDesign(f,o,only,false);
+function [fit, channelFit, components, optical, eventTable] = opticalAnalysis(result, recording, observations, ...
+        factors, coefficients, sensitivity, probe, hemisphere, modeled, temporal)
+    %OPTICALANALYSIS Measurement-space fit, model components and event-related optical averages.
+    n = factors.channels;
+    nt = factors.timeCount;
+    componentVectors = componentContributions(factors, observations, coefficients);
+    predicted = sum(componentVectors, 2);
+    observed = observations.response;
+    components = componentNorms(componentVectors, observed);
+
+    % Each measurement is assigned to the hemisphere it is most sensitive to.
+    leftSensitivity = sum(sensitivity.Adot(:, hemisphere == "Left" & modeled, 1), 2);
+    rightSensitivity = sum(sensitivity.Adot(:, hemisphere == "Right" & modeled, 1), 2);
+    channelHemisphere = repmat("Right", n, 1);
+    channelHemisphere(leftSensitivity > rightSensitivity) = "Left";
+
+    ml = probe.measurementList;
+    separation = sqrt(sum((probe.sourcePositions(ml(sensitivity.channels, 1), :) - ...
+        probe.detectorPositions(ml(sensitivity.channels, 2), :)).^2, 2));
+
+    % Time-by-measurement signals; columns are wavelength 1 then wavelength 2.
+    zeroSignals = zeros(nt, 2 * n);
+    optical = struct('time', recording.time, 'observed', zeroSignals, 'predicted', zeroSignals, ...
+        'residual', zeroSignals, 'brainTask', zeroSignals, 'scalpTask', zeroSignals, ...
+        'shortChannel', zeroSignals, 'drift', zeroSignals, 'nuisanceOnly', zeroSignals, ...
+        'channelIndices', sensitivity.channels, 'channelHemisphere', channelHemisphere, ...
+        'wavelengths', probe.wavelengths);
+
+    fitRows = {};
+    channelRows = {};
+    for w = 1:2
+        vectorRows = (w - 1) * n * nt + (1:n * nt);
+        columns = (w - 1) * n + (1:n);
+        observedOd = reshape(observed(vectorRows), n, nt)';
+        predictedOd = reshape(predicted(vectorRows), n, nt)';
+        residualOd = observedOd - predictedOd;
+        nuisanceDesign = [observations.nuisanceTemporal.short{w}, observations.nuisanceTemporal.drift];
+        nuisanceFit = nuisanceDesign * (nuisanceDesign \ observedOd);
+
+        optical.observed(:, columns) = observedOd;
+        optical.predicted(:, columns) = predictedOd;
+        optical.residual(:, columns) = residualOd;
+        optical.nuisanceOnly(:, columns) = nuisanceFit;
+        optical.brainTask(:, columns) = reshape(sum(componentVectors(vectorRows, 1:2), 2), n, nt)';
+        optical.scalpTask(:, columns) = reshape(sum(componentVectors(vectorRows, 3:4), 2), n, nt)';
+        optical.shortChannel(:, columns) = reshape(componentVectors(vectorRows, 5), n, nt)';
+        optical.drift(:, columns) = reshape(componentVectors(vectorRows, 6), n, nt)';
+
+        sse = sum(residualOd.^2, 'all');
+        nuisanceSse = sum((observedOd - nuisanceFit).^2, 'all');
+        lag1 = ssdot.validation.columnCorrelation(residualOd(1:end - 1, :), residualOd(2:end, :));
+        fitRows{w} = struct('wavelengthNm', probe.wavelengths(w), 'nSamples', nt, 'nMeasurements', n, 'sse', sse, ...
+            'rmseOD', sqrt(mean(residualOd.^2, 'all')), 'observedStdOD', std(observedOd(:)), ...
+            'rSquaredWithinMeasurement', 1 - sse / sum((observedOd - mean(observedOd)).^2, 'all'), ...
+            'nuisanceOnlySse', nuisanceSse, ...
+            'sseReductionFromNuisanceOnlyFraction', (nuisanceSse - sse) / nuisanceSse, ...
+            'medianResidualLag1', median(lag1));
+        channelRows = [channelRows, measurementRows(observedOd, predictedOd, residualOd, nuisanceFit, ...
+            sensitivity.channels, ml, probe.wavelengths(w), separation, channelHemisphere)];
     end
-    componentVectors(:,5)=o.shortRegressors*b(ni+(1:ns));
-    componentVectors(:,6)=o.driftRegressors*b(ni+ns+1:end);
-    predicted=sum(componentVectors,2); observed=o.response; residual=observed-predicted;
-    comp={};
-    for p=1:6
-        comp{p}=struct('component',labels(p),'normOD',norm(componentVectors(:,p)), ...
-            'rmsOD',sqrt(mean(componentVectors(:,p).^2)), ...
-            'percentOfObservedNorm',100*norm(componentVectors(:,p))/norm(observed));
+
+    optical.conditionEvents = recording.stimuli;
+    optical.units = "Natural-log delta OD, dimensionless; residual = observed - predicted";
+    fit = struct2table([fitRows{:}]);
+    channelFit = struct2table([channelRows{:}]);
+    eventTable = eventRelatedOptical(result, recording, optical, temporal, channelHemisphere, probe.wavelengths, n);
+end
+
+function componentVectors = componentContributions(factors, observations, coefficients)
+    % Predicted response of each model block alone: four image blocks, SS, drift.
+    nImage = factors.imageColumns;
+    nShort = size(observations.shortRegressors, 2);
+    componentVectors = zeros(2 * factors.channels * factors.timeCount, 6);
+    for p = 1:4
+        only = zeros(size(coefficients));
+        columns = factors.offsets(p) + (1:factors.parts(p).width);
+        only(columns) = coefficients(columns);
+        componentVectors(:, p) = ssdot.recon.applyFactorizedDesign(factors, observations, only, false);
     end
-    components=struct2table([comp{:}]); fitRows={}; rows={};
-    brainSensitivity=sum(s.Adot(:,hemi=="Left" & modeled,1),2);
-    rightSensitivity=sum(s.Adot(:,hemi=="Right" & modeled,1),2);
-    channelHemisphere=repmat("Right",n,1); channelHemisphere(brainSensitivity>rightSensitivity)="Left";
-    ml=probe.measurementList; rho=sqrt(sum((probe.sourcePositions(ml(s.channels,1),:)-probe.detectorPositions(ml(s.channels,2),:)).^2,2));
-    optical=struct('time',r.time,'observed',zeros(nt,2*n),'predicted',zeros(nt,2*n), ...
-        'residual',zeros(nt,2*n),'brainTask',zeros(nt,2*n),'scalpTask',zeros(nt,2*n), ...
-        'shortChannel',zeros(nt,2*n),'drift',zeros(nt,2*n),'nuisanceOnly',zeros(nt,2*n), ...
-        'channelIndices',s.channels,'channelHemisphere',channelHemisphere,'wavelengths',probe.wavelengths);
-    for w=1:2
-        vectorRows=(w-1)*n*nt+(1:n*nt); cols=(w-1)*n+(1:n);
-        Y=reshape(observed(vectorRows),n,nt)'; Yp=reshape(predicted(vectorRows),n,nt)'; R=Y-Yp;
-        X=[o.nuisanceTemporal.short{w},o.nuisanceTemporal.drift]; nuisance=X*(X\Y);
-        optical.observed(:,cols)=Y; optical.predicted(:,cols)=Yp; optical.residual(:,cols)=R; optical.nuisanceOnly(:,cols)=nuisance;
-        optical.brainTask(:,cols)=reshape(sum(componentVectors(vectorRows,1:2),2),n,nt)';
-        optical.scalpTask(:,cols)=reshape(sum(componentVectors(vectorRows,3:4),2),n,nt)';
-        optical.shortChannel(:,cols)=reshape(componentVectors(vectorRows,5),n,nt)';
-        optical.drift(:,cols)=reshape(componentVectors(vectorRows,6),n,nt)';
-        sse=sum(R.^2,'all'); sse0=sum((Y-nuisance).^2,'all');
-        fitRows{w}=struct('wavelengthNm',probe.wavelengths(w),'nSamples',nt,'nMeasurements',n,'sse',sse, ...
-            'rmseOD',sqrt(mean(R.^2,'all')),'observedStdOD',std(Y(:)), ...
-            'rSquaredWithinMeasurement',1-sse/sum((Y-mean(Y)).^2,'all'), ...
-            'nuisanceOnlySse',sse0,'sseReductionFromNuisanceOnlyFraction',(sse0-sse)/sse0, ...
-            'medianResidualLag1',median(ssdot.validation.columnCorrelation(R(1:end-1,:),R(2:end,:))));
-        for ch=1:n
-            x=Y(:,ch); z=R(:,ch); p=s.channels(ch);
-            rows{end+1}=struct('pairIndex',p,'source',ml(p,1),'detector',ml(p,2),'wavelengthNm',probe.wavelengths(w), ...
-                'separationMm',rho(ch),'dominantSensitivityHemisphere',channelHemisphere(ch), ...
-                'observedMeanOD',mean(x),'observedStdOD',std(x),'predictedStdOD',std(Yp(:,ch)), ...
-                'residualMeanOD',mean(z),'residualStdOD',std(z),'rmseOD',sqrt(mean(z.^2)), ...
-                'maeOD',mean(abs(z)),'maxAbsResidualOD',max(abs(z)),'p95AbsResidualOD',ssdot.validation.percentiles(abs(z),95), ...
-                'rSquared',1-sum(z.^2)/sum((x-mean(x)).^2),'observedPredictedR',ssdot.validation.correlationOf(x,Yp(:,ch)), ...
-                'lag1',ssdot.validation.correlationOf(z(1:end-1),z(2:end)), ...
-                'durbinWatson',sum(diff(z).^2)/sum(z.^2), ...
-                'nuisanceOnlyRmseOD',sqrt(mean((x-nuisance(:,ch)).^2)));
-        end
+    componentVectors(:, 5) = observations.shortRegressors * coefficients(nImage + (1:nShort));
+    componentVectors(:, 6) = observations.driftRegressors * coefficients(nImage + nShort + 1:end);
+end
+
+function components = componentNorms(componentVectors, observed)
+    labels = ["BrainHbO", "BrainHbR", "ScalpHbO", "ScalpHbR", "ShortChannel", "Drift"];
+    rows = cell(1, 6);
+    for p = 1:6
+        rows{p} = struct('component', labels(p), 'normOD', norm(componentVectors(:, p)), ...
+            'rmsOD', sqrt(mean(componentVectors(:, p).^2)), ...
+            'percentOfObservedNorm', 100 * norm(componentVectors(:, p)) / norm(observed));
     end
-    optical.conditionEvents=r.stimuli; optical.units="Natural-log delta OD, dimensionless; residual = observed - predicted";
-    fit=struct2table([fitRows{:}]); channelFit=struct2table([rows{:}]);
-    eventRows=cell(0,12); time=T.time; baseline=time<0;
-    for c=1:size(result.hbo,2)
-        st=find(string({r.stimuli.name})==string(T.conditionNames{c})); eventList=r.stimuli(st).events;
-        eventList=eventList(eventList(:,3)==1,:);
-        for w=1:2
-            for side=["Left","Right"]
-                cols=(w-1)*n+find(channelHemisphere==side);
-                fields={'observed','predicted','residual','brainTask','scalpTask'}; block=cell(size(fields));
-                for p=1:numel(fields)
-                    signal=mean(optical.(fields{p})(:,cols),2); trials=nan(numel(time),size(eventList,1));
-                    for trial=1:size(eventList,1)
-                        t=eventList(trial,1)+time;
-                        if min(t)<r.time(1) || max(t)>r.time(end), continue; end
-                        values=interp1(r.time,signal,t,'linear'); trials(:,trial)=values-mean(values(baseline));
-                    end
-                    block{p}=trials(:,all(isfinite(trials),1));
+    components = struct2table([rows{:}]);
+end
+
+function rows = measurementRows(observedOd, predictedOd, residualOd, nuisanceFit, channels, ml, wavelengthNm, ...
+        separation, channelHemisphere)
+    rows = cell(1, size(observedOd, 2));
+    for ch = 1:size(observedOd, 2)
+        x = observedOd(:, ch);
+        z = residualOd(:, ch);
+        pair = channels(ch);
+        rows{ch} = struct('pairIndex', pair, 'source', ml(pair, 1), 'detector', ml(pair, 2), ...
+            'wavelengthNm', wavelengthNm, 'separationMm', separation(ch), ...
+            'dominantSensitivityHemisphere', channelHemisphere(ch), ...
+            'observedMeanOD', mean(x), 'observedStdOD', std(x), 'predictedStdOD', std(predictedOd(:, ch)), ...
+            'residualMeanOD', mean(z), 'residualStdOD', std(z), 'rmseOD', sqrt(mean(z.^2)), ...
+            'maeOD', mean(abs(z)), 'maxAbsResidualOD', max(abs(z)), ...
+            'p95AbsResidualOD', ssdot.validation.percentiles(abs(z), 95), ...
+            'rSquared', 1 - sum(z.^2) / sum((x - mean(x)).^2), ...
+            'observedPredictedR', ssdot.validation.correlationOf(x, predictedOd(:, ch)), ...
+            'lag1', ssdot.validation.correlationOf(z(1:end - 1), z(2:end)), ...
+            'durbinWatson', sum(diff(z).^2) / sum(z.^2), ...
+            'nuisanceOnlyRmseOD', sqrt(mean((x - nuisanceFit(:, ch)).^2)));
+    end
+end
+
+function eventTable = eventRelatedOptical(result, recording, optical, temporal, channelHemisphere, wavelengths, n)
+    % Hemisphere-averaged optical signals, epoched around each enabled event.
+    eventRows = cell(0, 12);
+    time = temporal.time;
+    baseline = time < 0;
+    fields = {'observed', 'predicted', 'residual', 'brainTask', 'scalpTask'};
+
+    for c = 1:size(result.hbo, 2)
+        stimulus = find(string({recording.stimuli.name}) == string(temporal.conditionNames{c}));
+        events = recording.stimuli(stimulus).events;
+        events = events(events(:, 3) == 1, :);
+        for w = 1:2
+            for side = ["Left", "Right"]
+                columns = (w - 1) * n + find(channelHemisphere == side);
+                epochs = cell(size(fields));
+                for p = 1:numel(fields)
+                    signal = mean(optical.(fields{p})(:, columns), 2);
+                    epochs{p} = completeEpochs(signal, recording.time, events, time, baseline);
                 end
-                for k=1:numel(time)
-                    eventRows(end+1,:)={c,probe.wavelengths(w),side,time(k),size(block{1},2),mean(block{1}(k,:)), ...
-                        std(block{1}(k,:))/sqrt(size(block{1},2)),mean(block{2}(k,:)),mean(block{3}(k,:)), ...
-                        mean(block{4}(k,:)),mean(block{5}(k,:)),numel(cols)};
+                [observed, predicted, residual, brainTask, scalpTask] = epochs{:};
+                nEvents = size(observed, 2);
+
+                for k = 1:numel(time)
+                    eventRows(end + 1, :) = {c, wavelengths(w), side, time(k), nEvents, ...
+                        mean(observed(k, :)), std(observed(k, :)) / sqrt(nEvents), ...
+                        mean(predicted(k, :)), mean(residual(k, :)), mean(brainTask(k, :)), ...
+                        mean(scalpTask(k, :)), numel(columns)}; %#ok<AGROW>
                 end
             end
         end
     end
-    eventTable=cell2table(eventRows,'VariableNames',{'condition','wavelengthNm','sensitivityHemisphere','timeSeconds', ...
-        'nEvents','observedMeanOD','observedSemOD','predictedMeanOD','residualMeanOD','brainTaskMeanOD','scalpTaskMeanOD','nMeasurements'});
+    eventTable = cell2table(eventRows, 'VariableNames', {'condition', 'wavelengthNm', 'sensitivityHemisphere', ...
+        'timeSeconds', 'nEvents', 'observedMeanOD', 'observedSemOD', 'predictedMeanOD', 'residualMeanOD', ...
+        'brainTaskMeanOD', 'scalpTaskMeanOD', 'nMeasurements'});
 end
 
+function trials = completeEpochs(signal, recordingTime, events, relativeTime, baseline)
+    % Baseline-corrected epochs; epochs extending past the recording are dropped.
+    trials = nan(numel(relativeTime), size(events, 1));
+    for trial = 1:size(events, 1)
+        sampleTimes = events(trial, 1) + relativeTime;
+        if min(sampleTimes) < recordingTime(1) || max(sampleTimes) > recordingTime(end)
+            continue;
+        end
+        values = interp1(recordingTime, signal, sampleTimes, 'linear');
+        trials(:, trial) = values - mean(values(baseline));
+    end
+    trials = trials(:, all(isfinite(trials), 1));
+end

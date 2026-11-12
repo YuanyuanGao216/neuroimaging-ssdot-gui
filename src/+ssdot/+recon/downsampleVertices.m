@@ -1,30 +1,31 @@
-function [brainVerticesNew] = downsampleVertices(brainVertices, threshod, progress)
-    if nargin < 3, progress = []; end
-    brainVerticesNew = [];
-
-    for i = 1:size(brainVertices,1)
-        if ~isempty(progress) && (mod(i,100)==0 || i==1 || i==size(brainVertices,1)), progress(i,size(brainVertices,1)); end
-        point = brainVertices(i,:);
-
-        if isempty(brainVerticesNew) % add the first point to the new set
-            brainVerticesNew(end+1,:) = point;
-            continue
-        else
-            % is it close to any of the points in new_vertices?
-            closeFlag = 0;
-            for j = 1:size(brainVerticesNew,1)
-                distance = sqrt((point(1) - brainVerticesNew(j,1))^2 + ...
-                    (point(2) - brainVerticesNew(j,2))^2 + ...
-                    (point(3) - brainVerticesNew(j,3))^2);
-                if distance < threshod
-                    closeFlag = 1;
-                    break
-                end
-            end
+function centers = downsampleVertices(vertices, threshold, progress)
+    %DOWNSAMPLEVERTICES Greedy subset of vertices with no two kept points closer than threshold.
+    % Vertices are visited in order; each is kept unless it lies within threshold of a kept one.
+    if nargin < 3 || isempty(progress)
+        progress = @(varargin) [];
+    end
+    vertexCount = size(vertices, 1);
+    centers = [];
+    for i = 1:vertexCount
+        if mod(i, 100) == 0 || i == 1 || i == vertexCount
+            progress(i, vertexCount);
         end
-        % after running all the points in the new vertices, there is no close
-        % points, we can add this one
-        if closeFlag == 0
-            brainVerticesNew(end + 1,:) = point;
+        point = vertices(i, :);
+        if ~isNearAny(point, centers, threshold)
+            centers(end + 1, :) = point; %#ok<AGROW>
         end
     end
+end
+
+function near = isNearAny(point, centers, threshold)
+    near = false;
+    for j = 1:size(centers, 1)
+        distance = sqrt((point(1) - centers(j, 1))^2 + ...
+            (point(2) - centers(j, 2))^2 + ...
+            (point(3) - centers(j, 3))^2);
+        if distance < threshold
+            near = true;
+            return
+        end
+    end
+end

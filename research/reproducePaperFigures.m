@@ -400,91 +400,41 @@ clear atlasViewer
 %     plot_int_paper(h, faces, brain_vertices, HbR(:, hand), 'R')
 % end
 %% plot LI
-for cond = 1:2
-    load(fullfile('exp_data', 'bothConditions', 'Conc_data', 'output.mat'));
-    li1 = output(cond).LI_subj_HbO;
-    g1 = cell( length(li1), 1);
-    g1(:) = {'SS-DOT'};
+% Per-subject lateralization index of each method: HbO for both conditions, then HbR.
+resultSources = {
+    fullfile('exp_data', 'bothConditions', 'Conc_data'), 'SS-DOT'
+    fullfile('exp_data', 'sequential_results', 'sequential_script_gamma_avgSS_brainscalp', 'Conc_data_seq'), 'SS+head'
+    fullfile('exp_data', 'sequential_results', 'sequential_script_gamma_noSS_brainscalp', 'Conc_data_seq'), 'No SS+head'
+    fullfile('exp_data', 'sequential_results', 'sequential_script_gamma_avgSS_brain', 'Conc_data_seq'), 'SS+brain only'
+    fullfile('exp_data', 'sequential_results', 'sequential_script_gamma_noSS_brain', 'Conc_data_seq'), 'No SS+brain only'
+    };
+for chromophore = {'HbO', 'HbR'}
+    for cond = 1:2
+        LI = [];
+        g = {};
+        for source = 1:size(resultSources, 1)
+            load(fullfile(resultSources{source, 1}, 'output.mat'));
+            li = output(cond).(['LI_subj_' chromophore{1}]);
+            LI = [LI; li]; %#ok<AGROW>
+            g = [g; repmat(resultSources(source, 2), length(li), 1)]; %#ok<AGROW>
+        end
 
-    load(fullfile('exp_data', 'sequential_results', 'sequential_script_gamma_avgSS_brainscalp', 'Conc_data_seq', 'output.mat'));
-    li2 = output(cond).LI_subj_HbO;
-    g2 = cell( length(li2), 1);
-    g2(:) = {'SS+head'};
+        figure
+        hold on
+        boxplot(LI , g, 'colors', 'k', 'symbol', 'k');
+        ylabel('LI')
+        xtickangle(45)
+        box off
+        set(gca,'fontname','Arial')
+        set(gca, 'fontsize', 14)
+        set(gcf, 'position', [10 10 421   317])
 
-    load(fullfile('exp_data', 'sequential_results', 'sequential_script_gamma_noSS_brainscalp', 'Conc_data_seq', 'output.mat'));
-    li3 = output(cond).LI_subj_HbO;
-    g3 = cell( length(li3), 1);
-    g3(:) = {'No SS+head'};
-
-    load(fullfile('exp_data', 'sequential_results', 'sequential_script_gamma_avgSS_brain', 'Conc_data_seq', 'output.mat'));
-    li4 = output(cond).LI_subj_HbO;
-    g4 = cell( length(li4), 1);
-    g4(:) = {'SS+brain only'};
-
-    load(fullfile('exp_data', 'sequential_results', 'sequential_script_gamma_noSS_brain', 'Conc_data_seq', 'output.mat'));
-    li5 = output(cond).LI_subj_HbO;
-    g5 = cell( length(li5), 1);
-    g5(:) = {'No SS+brain only'};
-
-    figure
-    hold on
-    LI = [li1; li2; li3; li4; li5];
-    g = [g1;g2;g3;g4;g5];
-    boxplot(LI , g, 'colors', 'k', 'symbol', 'k');
-    ylabel('LI')
-    xtickangle(45)
-    box off
-    set(gca,'fontname','Arial')
-    set(gca, 'fontsize', 14)
-    set(gcf, 'position', [10 10 421   317])
-
-    [p,tbl,stats] = kruskalwallis(LI,g);
-    c = multcompare(stats, "ctype","bonferroni",'display', 'off');
-    tbl = array2table(c,'VariableNames', {'GroupA','GroupB','LowerLimit','AB','UpperLimit','Pvalue'})
+        [p,tbl,stats] = kruskalwallis(LI,g);
+        c = multcompare(stats, "ctype","bonferroni",'display', 'off');
+        tbl = array2table(c,'VariableNames', {'GroupA','GroupB','LowerLimit','AB','UpperLimit','Pvalue'})
+    end
 end
 
-for cond = 1:2
-    load(fullfile('exp_data', 'bothConditions', 'Conc_data', 'output.mat'));
-    li1 = output(cond).LI_subj_HbR;
-    g1 = cell( length(li1), 1);
-    g1(:) = {'SS-DOT'};
-
-    load(fullfile('exp_data', 'sequential_results', 'sequential_script_gamma_avgSS_brainscalp', 'Conc_data_seq', 'output.mat'));
-    li2 = output(cond).LI_subj_HbR;
-    g2 = cell( length(li2), 1);
-    g2(:) = {'SS+head'};
-
-    load(fullfile('exp_data', 'sequential_results', 'sequential_script_gamma_noSS_brainscalp', 'Conc_data_seq', 'output.mat'));
-    li3 = output(cond).LI_subj_HbR;
-    g3 = cell( length(li3), 1);
-    g3(:) = {'No SS+head'};
-
-    load(fullfile('exp_data', 'sequential_results', 'sequential_script_gamma_avgSS_brain', 'Conc_data_seq', 'output.mat'));
-    li4 = output(cond).LI_subj_HbR;
-    g4 = cell( length(li4), 1);
-    g4(:) = {'SS+brain only'};
-
-    load(fullfile('exp_data', 'sequential_results', 'sequential_script_gamma_noSS_brain', 'Conc_data_seq', 'output.mat'));
-    li5 = output(cond).LI_subj_HbR;
-    g5 = cell( length(li5), 1);
-    g5(:) = {'No SS+brain only'};
-
-    figure
-    hold on
-    LI = [li1; li2; li3; li4; li5];
-    g = [g1;g2;g3;g4;g5];
-    boxplot(LI , g, 'colors', 'k', 'symbol', 'k');
-    ylabel('LI')
-    xtickangle(45)
-    box off
-    set(gca,'fontname','Arial')
-    set(gca, 'fontsize', 14)
-    set(gcf, 'position', [10 10 421   317])
-
-    [p,tbl,stats] = kruskalwallis(LI,g);
-    c = multcompare(stats,"ctype","bonferroni", 'display', 'off');
-    tbl = array2table(c,'VariableNames', {'GroupA','GroupB','LowerLimit','AB','UpperLimit','Pvalue'})
-end
 %% table 2
 % HbO = {'left hand t-value'; 'left hand CBR'; 'left hand LI';...
 %     'right hand t-value'; 'right hand CBR'; 'right hand LI'};
@@ -558,15 +508,13 @@ function plotIntPaper(h, faces, brainVertices, intAtPos, rotation)
         fprintf('check the view positon\n')
     end
 
-    if(~exist('light_onoff') | (exist('light_onoff') & strcmp(lightOnoff,'on')))
-        l = camlight;
-        set(l,'Position',[50 2000 100]);
+    l = camlight;
+    set(l,'Position',[50 2000 100]);
 
-        l2 = camlight;
-        set(l2,'Position',[50 -100 -100]);
+    l2 = camlight;
+    set(l2,'Position',[50 -100 -100]);
 
-        camlight(0,0);
-    end
+    camlight(0,0);
     lighting phong;
     myColorMap = jet(256);
     myColorMap(127:129,:) = 0.8;

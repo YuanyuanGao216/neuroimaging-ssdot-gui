@@ -6,5 +6,7 @@ function sensitivity = loadSensitivity(folder, mask, config, atlas)
     if nargin < 4
         atlas = ssdot.io.loadAtlas(fullfile(folder, "atlasViewer.mat"));
     end
-    sensitivity = ssdot.recon.prepareSensitivity(ssdot.io.loadForwardModel(folder, atlas), mask, config);
+
+    model = ssdot.io.loadForwardModel(folder, atlas);
+    sensitivity = ssdot.recon.prepareSensitivity(model, mask, config);
 end

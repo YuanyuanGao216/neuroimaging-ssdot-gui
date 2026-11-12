@@ -1,26 +1,34 @@
 function group = loadDataset(folder, progress)
     %LOADDATASET Rebase and load a processed Homer tree without modifying files.
     % Optional progress(message,completed,total) runs between blocking reads.
-    if nargin < 2, progress = []; end
+    if nargin < 2
+        progress = [];
+    end
+
     filename = fullfile(folder, "derivatives", "homer", "groupResults.mat");
     assert(isfile(filename), "SSDOT:MissingGroupResults", "Missing Homer group results: %s", filename);
-    notify(progress,"Reading groupResults.mat",0,0);
+    reportProgress(progress, "Reading groupResults.mat", 0, 0);
     loaded = load(filename, "group");
     assert(isfield(loaded, "group") && isa(loaded.group, "GroupClass"), ...
         "SSDOT:InvalidGroup", "Expected a Homer GroupClass object.");
     group = loaded.group;
+
+    % The saved tree points at the folder it was processed in; rebasing also counts the nodes.
+    datasetFolder = filesepStandard(char(folder), 'dir');
     total = 0;
     for index = 1:numel(group)
-        total = total + rebaseNode(group(index), filesepStandard(char(folder), 'dir'));
+        total = total + rebaseNode(group(index), datasetFolder);
     end
+
     completed = 0;
     for index = 1:numel(group)
-        completed = loadNode(group(index),progress,completed,total);
+        completed = loadNode(group(index), progress, completed, total);
     end
-    notify(progress,"Dataset files loaded",completed,total);
+    reportProgress(progress, "Dataset files loaded", completed, total);
 end
 
 function count = rebaseNode(node, folder)
+    % Point every node at the chosen dataset folder; returns the number of nodes in the subtree.
     node.path = folder;
     count = 1;
     children = ssdot.io.nodeChildren(node);
@@ -30,7 +38,9 @@ function count = rebaseNode(node, folder)
 end
 
 function completed = loadNode(node, progress, completed, total)
-    notify(progress,"Reading "+string(node.type)+": "+string(node.name),completed,total);
+    nodeLabel = string(node.type) + ": " + string(node.name);
+    reportProgress(progress, "Reading " + nodeLabel, completed, total);
+
     children = ssdot.io.nodeChildren(node);
     if isempty(children)
         status = node.Load();
@@ -42,12 +52,15 @@ function completed = loadNode(node, progress, completed, total)
     assert(isnumeric(status) && isscalar(status) && status == 0, ...
         "SSDOT:DatasetLoad", "Failed to load %s.", node.name);
     completed = completed + 1;
-    notify(progress,"Read "+string(node.type)+": "+string(node.name),completed,total);
+    reportProgress(progress, "Read " + nodeLabel, completed, total);
+
     for index = 1:numel(children)
-        completed = loadNode(children(index),progress,completed,total);
+        completed = loadNode(children(index), progress, completed, total);
     end
 end
 
-function notify(progress, message, completed, total)
-    if ~isempty(progress), progress(message,completed,total); end
+function reportProgress(progress, message, completed, total)
+    if ~isempty(progress)
+        progress(message, completed, total);
+    end
 end

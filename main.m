@@ -3,9 +3,11 @@ function output = main(mode)
     arguments
         mode (1,1) string {mustBeMember(mode, ["gui", "simulation", "validation"])} = "gui"
     end
+
     root = fileparts(mfilename("fullpath"));
     addpath(fullfile(root, "src"));
     environment = ssdot.app.initializeEnvironment(root);
+
     switch mode
         case "gui"
             output = ssdot.app.launchGui(environment);
@@ -13,6 +15,6 @@ function output = main(mode)
             ssdot.simulation.runStudy();
             output = [];
         case "validation"
-            output=ssdot.validation.runStudy();
+            output = ssdot.validation.runStudy();
     end
 end

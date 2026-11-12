@@ -18,7 +18,7 @@ Bundled Homer dependencies are initialized automatically.
 Open the repository folder in MATLAB and run:
 
 ```matlab
-app = main();              % equivalent to main("gui")
+main
 ```
 
 1. Click **Open dataset...** and select the included `ST001` folder or another compatible dataset. Opening reads the stored Homer results and shows an **Overview** of recordings, durations, channels, wavelengths, conditions and model files. Nothing is computed.
@@ -38,7 +38,7 @@ app = main();              % equivalent to main("gui")
 
 After the recordings, Run Analysis averages current results at every level with two or more members: a session averages its recordings, a subject its sessions and the group its subjects. A level with one member passes it on unchanged. Each average appears in the **Shown** list, for example `Average: sess01 (3 recordings)`. It also holds a per-vertex one-sample t-test of the reconstructed change against zero across its members (t = mean / (SD / sqrt(n)), df = n - 1, two-sided); choose **Map > T value** or **P value** in Results. Conditions are matched by name; a condition missing from any member is left out and named in the result description. Averaging needs no reconstruction and can be switched off under **Settings > Averages**. The P map colors vertices below the chosen significance level (default 0.05) and shows the rest in gray. P values can be shown uncorrected, FDR-adjusted (Benjamini-Hochberg) or Bonferroni-adjusted across the vertices of the map. Vertices whose values are identical in every recording have no defined t and are shown as neutral. The statistics are saved in sessions and exported with the maps.
 
-Settings apply to the whole workspace. Changing them never discards results: existing results are marked **Out of date** until the next Run Analysis, which reuses every result whose inputs and settings are unchanged. ROI thresholds can be changed after a run; **Update ROIs** recalculates them from existing results without repeating the reconstruction. An empty ROI (no vertex above the threshold) is a valid outcome and is reported as such.
+Settings apply to the whole workspace. Changing them never discards results: existing results are marked **Out of date** until the next Run Analysis, which reuses every result whose inputs and settings are unchanged. ROI thresholds can be changed after a run; the next Run Analysis recalculates the ROIs from the existing results without repeating the reconstruction. An empty ROI (no vertex above the threshold) is a valid outcome and is reported as such.
 
 ## Dataset requirements
 
@@ -135,7 +135,7 @@ assertSuccess(results);
 assert(all([results.Passed]));
 ```
 
-The suite covers the compressed solver against a dense reference calculation, ST001 against captured reference outputs, statistics, ROI rules, settings, runtime retention, and the window with synthetic results. The temporal reference was captured from the professor's pinned Homer code by [captureTestFixtures.m](research/captureTestFixtures.m), so the suite does not need that repository. GPU execution is checked in the app with **Log > Check GPU**. Full-resolution and public-data runs are research workflows (`main("validation")`), not tests.
+The suite covers the solver against a direct least-squares calculation of the physical model, ST001 against captured reference outputs, statistics, ROI rules, settings, runtime retention, and the window with synthetic results. The temporal reference was captured from the professor's pinned Homer code by [captureTestFixtures.m](research/captureTestFixtures.m), so the suite does not need that repository. GPU execution is checked in the app with **Log > Check GPU**. Full-resolution and public-data runs are research workflows (`main("validation")`), not tests.
 
 ## Reference and license
 

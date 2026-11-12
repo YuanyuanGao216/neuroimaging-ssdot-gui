@@ -9,22 +9,26 @@ function statistics = groupStatistics(results)
     % are identical in every recording (for example outside the brain mask) has
     % no defined t; its t and p are NaN.
     count = numel(results);
-    assert(count>=2,'SSDOT:StatisticsCount','T and P values need results from at least two recordings.');
-    degrees = count-1;
-    statistics = struct('test',"One-sample t-test against zero across recordings",'tails',"two-sided", ...
-        'correction',"none",'recordings',count,'degreesOfFreedom',degrees,'hbo',[],'hbr',[]);
-    for hb = ["hbo","hbr"]
-        sizes = arrayfun(@(result)size(result.(hb)),results,'UniformOutput',false);
-        assert(all(cellfun(@(value)isequal(value,sizes{1}),sizes)),'SSDOT:ResultSize','Results have incompatible dimensions.');
-        values = double(cat(3,results.(hb)));
-        assert(all(isfinite(values),'all'),'SSDOT:ResultValues','Results contain non-finite values.');
-        standardError = std(values,0,3)/sqrt(count);
-        t = mean(values,3)./standardError;
-        t(~(standardError>0)) = NaN;
+    assert(count >= 2, 'SSDOT:StatisticsCount', 'T and P values need results from at least two recordings.');
+    degrees = count - 1;
+    statistics = struct('test', "One-sample t-test against zero across recordings", 'tails', "two-sided", ...
+        'correction', "none", 'recordings', count, 'degreesOfFreedom', degrees, 'hbo', [], 'hbr', []);
+
+    for hb = ["hbo", "hbr"]
+        sizes = arrayfun(@(result) size(result.(hb)), results, 'UniformOutput', false);
+        assert(all(cellfun(@(value) isequal(value, sizes{1}), sizes)), ...
+            'SSDOT:ResultSize', 'Results have incompatible dimensions.');
+        values = double(cat(3, results.(hb)));
+        assert(all(isfinite(values), 'all'), 'SSDOT:ResultValues', 'Results contain non-finite values.');
+
+        standardError = std(values, 0, 3)/sqrt(count);
+        t = mean(values, 3)./standardError;
+        t(~(standardError > 0)) = NaN;
+
         p = NaN(size(t));
         defined = isfinite(t);
         % Two-sided Student-t tail probability through the regularized incomplete beta function.
-        p(defined) = betainc(degrees./(degrees+t(defined).^2),degrees/2,0.5);
-        statistics.(hb) = struct('t',t,'p',p);
+        p(defined) = betainc(degrees./(degrees + t(defined).^2), degrees/2, 0.5);
+        statistics.(hb) = struct('t', t, 'p', p);
     end
 end
