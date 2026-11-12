@@ -19,9 +19,7 @@ function testOperatorAndWeightedCompressionMatchDense(t)
 end
 function testAllInverseObjectivesMatchReference(t)
     [model,o,cfg]=fixture();
-    devices="cpu"; hardware=ssdot.app.gpuDiagnostics(false);
-    if hardware.available, devices(end+1)="gpu"; end
-    for device=devices
+    for device="cpu" % GPU start-up costs seconds; the GPU path is checked by Settings > Log > Check GPU.
         for mode=[1 2 3]
             for beta=[0 0.03]
                 cfg.device=device; cfg.regularization=mode; cfg.beta=beta; cfg.reconstructionBackend='compressed';

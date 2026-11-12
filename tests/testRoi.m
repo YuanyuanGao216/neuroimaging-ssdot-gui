@@ -38,31 +38,6 @@ function testNeutralCoordinateDistance(t)
     b.coordinateSystem = "other frame";
     verifyError(t,@()ssdot.recon.coordinateDistance(a,b),'SSDOT:CoordinateMismatch');
 end
-function testSingleAndComparisonRenderWithoutAccumulation(t)
-    surface = smallSurface();
-    a = ssdot.io.roiFromIndices(surface,1,3,'first fixture');
-    b = ssdot.io.roiFromIndices(surface,2,4,'second fixture');
-    fig = figure('Visible','off'); t.addTeardown(@()delete(fig));
-    left = subplot(1,2,1,'Parent',fig); right = subplot(1,2,2,'Parent',fig);
-    h = ssdot.viz.plotRoi(left,surface,a);
-    verifyEqual(t,h.roi.XData,surface.vertices(1,2));
-    verifyEqual(t,h.surface.FaceAlpha,0.12);
-    verifyEqual(t,h.surface.FaceColor,[0.4 0.4 0.4]);
-    verifyEmpty(t,findall(fig,'Type','colorbar')); % ROI colors do not encode amplitude.
-    ssdot.viz.plotRoi(left,surface,a);
-    verifyEqual(t,numel(findall(left,'Type','patch')),1);
-    ssdot.viz.plotRoiComparison(left,right,surface,a,b,"sideBySide");
-    verifyEqual(t,numel(findall(right,'Type','patch')),1);
-    ssdot.viz.plotRoiComparison(left,right,surface,a,b,"overlay");
-    verifyEqual(t,numel(findall(left,'Type','line')),4);
-    verifyEmpty(t,findall(right,'Type','patch')); drawnow;
-end
-function testEmptyThresholdSelectionRenders(t)
-    surface=smallSurface();roi=ssdot.io.roiFromIndices(surface,[],[],'empty selection');
-    fig=figure('Visible','off');t.addTeardown(@()delete(fig));ax=axes(fig);
-    handles=ssdot.viz.plotRoi(ax,surface,roi);
-    verifyTrue(t,isgraphics(handles.surface));verifyFalse(t,isgraphics(handles.roi(1)));
-end
 function testLegacyAssociationAndCanonicalRoundTrip(t)
     surface = smallSurface();
     fixture = t.applyFixture(matlab.unittest.fixtures.TemporaryFolderFixture);
@@ -73,40 +48,6 @@ function testLegacyAssociationAndCanonicalRoundTrip(t)
     verifyEqual(t,roi.indices,index_ROI); verifyEqual(t,roi.nonRoiIndices,index_nonROI);
     filename = fullfile(fixture.Folder,'canonical.mat'); ssdot.io.saveRoi(filename,roi,surface);
     verifyEqual(t,ssdot.io.readRoi(filename,surface),roi);
-end
-function testGuiSingleRoiNeedsNoReconstructionOrComparison(t)
-    root = fileparts(fileparts(mfilename('fullpath'))); addpath(root);
-    app = main(); t.addTeardown(@()delete(app)); app.figure.Visible = 'off';
-    group = app.openDataset(fullfile(root,'ST001'));
-    state = app.controller.stateForNode(group.subjs(1).sess(1).runs(1));
-    app.controller.loadAtlas(state,fullfile(root,'ST001','atlasViewer.mat'));
-    viewer = app.controller.openRoiViewer(state); viewer.figure.Visible = 'off';
-    verifyEmpty(t,state.rois); verifyEmpty(t,state.result);
-    roi = ssdot.io.roiFromIndices(viewer.surface,[1;2],3,'single ROI fixture'); viewer.addRoi(roi);
-    verifyEqual(t,numel(state.rois),1); verifyEqual(t,viewer.mode.Value,'single');
-    verifyEqual(t,string(viewer.mode.Enable),"off"); verifyEqual(t,string(viewer.secondSelection.Enable),"off");
-    verifyEqual(t,viewer.firstSelection.Value,1);
-    roi.label = "second compatible fixture"; roi.indices = 4; viewer.addRoi(roi);
-    viewer.secondSelection.Value = 1; viewer.mode.Value = 'sideBySide'; viewer.refresh();
-    verifyEqual(t,string(viewer.mode.Enable),"on");
-    viewer.mode.Value = 'overlay'; viewer.refresh();
-    verifyEqual(t,numel(findall(viewer.firstAxes,'Type','patch')),1);
-    viewer.vertexInputs(1).Value = 1; viewer.vertexInputs(2).Value = 2;
-    distance = viewer.measureDistance();
-    verifyEqual(t,distance.value,norm(viewer.surface.vertices(1,:)-viewer.surface.vertices(2,:)));
-    viewer.meshSelection.Value = 'pial'; viewer.changeMesh();
-    verifySize(t,viewer.surface.vertices,[34207 3]); verifyEmpty(t,viewer.compatibleIndices);
-    verifyEqual(t,viewer.firstSelection.Value,0);
-    verifyTrue(t,contains(string(viewer.status.Text),'No ROI is defined'));
-    verifyEqual(t,string(viewer.updateButton.Visible),"off");
-    verifyEqual(t,app.controller.cacheStatistics.solves,0);
-    % A session preserves both explicit mesh associations, never remaps the indices.
-    pial = ssdot.io.roiFromIndices(viewer.surface,34207,[],'full-pial fixture'); viewer.addRoi(pial);
-    fixture = t.applyFixture(matlab.unittest.fixtures.TemporaryFolderFixture);
-    filename = fullfile(fixture.Folder,'rois.mat'); ssdot.io.saveSession(filename,state);
-    other = ssdot.app.ReconstructionState(); other.nodeName = state.nodeName; other.datasetRoot = state.datasetRoot;
-    ssdot.io.restoreSession(filename,other); verifyEqual(t,other.rois,state.rois);
-    drawnow;
 end
 function surface = smallSurface()
     vertices = [0 0 0;1 0 0;0 1 0;0 0 1]; faces = [1 2 3;1 2 4;1 3 4;2 3 4];

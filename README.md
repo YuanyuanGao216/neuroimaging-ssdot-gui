@@ -127,7 +127,7 @@ Historical simulation requires separately supplied compatible reference recordin
 
 ## Development
 
-Run the checks relevant to a change. To run the complete suite:
+The suite runs in under ten seconds in an open MATLAB session (the first run in a new session also pays MATLAB's one-time graphics start-up):
 
 ```matlab
 results = runtests("tests", "IncludeSubfolders", true);
@@ -135,7 +135,7 @@ assertSuccess(results);
 assert(all([results.Passed]));
 ```
 
-Some tests require external recordings listed in [publicDataManifest.json](tests/fixtures/publicDataManifest.json); they are read from `SSDOT_PUBLIC_DATA_ROOT`, or from `ssdot-public-data-audit` in the temporary folder, and verified by checksum. GPU tests require the corresponding toolbox and hardware. The full-resolution workflow test is reported as not executed when the memory preflight finds too little free RAM. GUI tests replace `app.controller.chooser` instead of driving native file dialogs.
+The suite covers the compressed solver against a dense reference calculation, ST001 against captured reference outputs, statistics, ROI rules, settings, runtime retention, and the window with synthetic results. The temporal reference was captured from the professor's pinned Homer code by [captureTestFixtures.m](research/captureTestFixtures.m), so the suite does not need that repository. GPU execution is checked in the app with **Log > Check GPU**. Full-resolution and public-data runs are research workflows (`main("validation")`), not tests.
 
 ## Reference and license
 

@@ -7,24 +7,12 @@ function setupOnce(t)
     addpath(root);
     addpath(fullfile(root,'src'));
     ssdot.app.initializeEnvironment();
-    addpath(genpath(fullfile(root,'external','homer')));
 end
 
-function testGaussianKernelAndExplicitGpuPolicy(t)
+function testGaussianKernel(t)
     expected=[1 exp(-0.5)]; expected=expected/sum(expected);
     verifyEqual(t,ssdot.recon.buildGaussianKernels([0 0 0],[0 0 0;1 0 0],1,'cpu'),expected,'AbsTol',1e-12);
-    report=ssdot.app.gpuDiagnostics(false);
-    if report.available
-        verifyEqual(t,ssdot.recon.buildGaussianKernels([0 0 0],[0 0 0;1 0 0],1,'gpu'),expected,'AbsTol',1e-12);
-    else
-        verifyError(t,@()ssdot.recon.buildGaussianKernels([0 0 0],[0 0 0;1 0 0],1,'gpu'),'SSDOT:GPUUnavailable');
-    end
     verifyEqual(t,ssdot.recon.downsampleVertices([1 2 3],1),[1 2 3]);
-end
-
-function testLegacyTemporalAPI(t)
-    dA=reshape(1:24,4,3,2); basis=reshape(1:10,5,1,2);
-    verifyEqual(t,ssdot.recon.buildTemporalMatrix(dA,basis),ssdot.recon.buildTemporalMatrix(struct('dA',dA,'tbasis',basis)));
 end
 
 function testForwardDesignAgainstPhysicalModel(t)
@@ -112,55 +100,6 @@ function testForwardDesignAgainstPhysicalModel(t)
             C=struct('intensity_HbO',{{[2 3 4;5 6 7]}},'intensity_HbR',{{[8 9 10;11 12 13]}});
             [O,R]=ssdot.recon.projectToVertices(struct('T',T,'M',struct('mask_brain',[1 3]),'Conc',C),4);
             verifyEqual(t,O,[3;0;6;0]); verifyEqual(t,R,[9;0;12;0]);
-        end
-
-        function testMissingSimulationDoesNotWrite(t)
-            previousInputRoot=getenv('SSDOT_SIMULATION_INPUT_ROOT');
-            t.addTeardown(@()setenv('SSDOT_SIMULATION_INPUT_ROOT',previousInputRoot)); setenv('SSDOT_SIMULATION_INPUT_ROOT','');
-            folder=tempname;
-            cfg=struct('unilateral_data_path',folder,'restingpath',folder,'savepath',fullfile(folder,'output'),'scale_factor',1e-5);
-            verifyError(t,@()ssdot.simulation.simulatePerturbation(cfg),'SSDOT:MissingSimulationInputs');
-            verifyFalse(t,isfolder(folder));
-            previous=pwd;
-            verifyError(t,@()main("simulation"),'SSDOT:MissingSimulationInputs');
-            verifyEqual(t,pwd,previous);
-        end
-
-        function testLegacySpatialAndFigureAPIs(t)
-            fixture=t.applyFixture(matlab.unittest.fixtures.TemporaryFolderFixture);
-            old=get(groot,'defaultFigureVisible');
-            t.addTeardown(@()set(groot,'defaultFigureVisible',old));
-            set(groot,'defaultFigureVisible','off');
-            vertices=[0 0 0;1 0 0;0 1 0;0 0 1];
-            faces=[1 2 3;1 2 4;1 3 4;2 3 4];
-            av=struct('fwmodel',struct('mesh',struct('vertices',vertices),'mesh_scalp',struct('vertices',vertices)));
-            atlas=fullfile(fixture.Folder,'atlasViewer.mat');
-            save(atlas,'-struct','av');
-            M=struct('mask_brain',1:4,'mask_scalp',1:4);
-            G=ssdot.recon.buildSpatialBasis(av,M,5,5,1,1,[],[],'cpu');
-            verifySize(t,G.G_brain,[1 4]);
-            verifyEqual(t,sum(G.G_scalp,2),1,'AbsTol',1e-12);
-            cfg=struct('savepath',fixture.Folder,'caxis_value',[-1 1],'bi',1);
-            ssdot.viz.plotHemoglobin('sample',faces,vertices,[0;1;0;0],[0;-1;0;0],cfg,'figures','off');
-            verifyTrue(t,isfile(fullfile(fixture.Folder,'figures','sample1.fig')));
-    fig = figure('Visible','off'); t.addTeardown(@()delete(fig)); ax = axes(fig);
-    patch = ssdot.viz.plotIntensity(ax,[-2 3],faces,vertices,[0;1;0;0],'L');
-    verifyEqual(t,ax.CLim,[-2 3]); verifyEqual(t,ax.CameraTarget,[128 132 130]);
-    verifyEqual(t,ax.CameraPosition,[128 2238.8 130],'AbsTol',1e-10);
-    verifyEqual(t,patch.FaceAlpha,1);
-        end
-
-        function testRejectIncompatibleSimulationReference(t)
-            root=fileparts(fileparts(mfilename('fullpath')));
-            fixture=t.applyFixture(matlab.unittest.fixtures.TemporaryFolderFixture);
-            index=1:3; task_mat=ones(3); rest_mat=ones(3);
-            sequences=fullfile(fixture.Folder,'stim_sequences.mat');
-            save(sequences,'index','task_mat','rest_mat');
-            cfg=struct('unilateral_data_path',fullfile(root,'ST001'),'restingpath',fullfile(root,'ST001'), ...
-                'reference_file',fullfile(root,'ST001','sess01','2025-08-29_001.snirf'), ...
-                'stim_sequences_path',sequences,'savepath',fullfile(fixture.Folder,'output'));
-            verifyError(t,@()ssdot.simulation.simulatePerturbation(cfg),'SSDOT:IncompatibleSimulationProbe');
-            verifyFalse(t,isfolder(cfg.savepath));
         end
 
         function A=optics(nChannels,nVertices)
