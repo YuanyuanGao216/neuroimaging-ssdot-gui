@@ -18,7 +18,8 @@ function study = runStudy(options, observer)
     progressFile = fullfile(root, 'progress.json');
     start = tic;
 
-    addpath(genpath(fullfile(ssdot.app.projectRoot(), 'external', 'homer')));
+    addpath(genpath(fullfile(ssdot.app.projectRoot(), 'external', 'homer3')));
+    addpath(genpath(fullfile(ssdot.app.projectRoot(), 'external', 'legacy')));
     global logger
     if isempty(logger) || ~isvalid(logger)
         logger = Logger(char(fullfile(root, 'homer')), 1);

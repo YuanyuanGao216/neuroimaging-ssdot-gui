@@ -108,7 +108,8 @@ flowchart LR
 | `src/+ssdot/+viz` | Shared plotting and figure export |
 | `src/+ssdot/+simulation` | Synthetic data and historical simulation workflows |
 | `src/+ssdot/+validation` | Numerical diagnostics and validation reporting |
-| `external/homer` | Bundled Homer/SNIRF dependencies |
+| `external/homer3` | Stock [Homer3](https://github.com/BUNPC/Homer3) v1.87.0 (data classes and processing functions; no GUIs or sample data) |
+| `external/legacy` | AtlasViewer, Homer2 and historical helpers that Homer3 does not include |
 | `research` | Research scripts and original-code comparison utilities |
 | `tests` | Numerical, integration and GUI regression checks |
 
@@ -143,4 +144,4 @@ Gao, Y. et al. (2023). *Short-separation regression incorporated diffuse optical
 
 SS-DOT is distributed under the [MIT license](LICENSE), copyright © 2022 Yuanyuan Gao. This GUI builds on the original research implementation and subsequent student contributions.
 
-Bundled Homer and [SNIRF](https://github.com/fNIRS/snirf_homer3) code retains its own copyright and redistribution notices, including those in [GetExtinctions.m](external/homer/HomerClass_ForOutPut/FuncRegistry/UserFunctions/GetExtinctions.m) and [MakeFilter.m](external/homer/HomerClass_ForOutPut/FuncRegistry/UserFunctions/MakeFilter.m). Those dependency terms remain applicable independently of the project license.
+Bundled Homer3 code retains its own copyright and redistribution notices: see [its license](external/homer3/LICENSE.txt) and the notices in files such as [GetExtinctions.m](external/homer3/FuncRegistry/UserFunctions/GetExtinctions.m). The historical simulation keeps the earlier, locally modified Homer processing functions it was validated with in [src/+ssdot/+io/private](src/+ssdot/+io/private), where only its preprocessing code can see them. Those dependency terms remain applicable independently of the project license.

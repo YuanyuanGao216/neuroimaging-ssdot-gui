@@ -106,7 +106,8 @@ classdef SharedCache < handle
             readerFiles = string(cellfun(@(name) fullfile(packageRoot, '+io', [name '.m']), readers, ...
                 'UniformOutput', false))';
             configFiles = string(fullfile(packageRoot, '+app', 'defaultConfig.m'));
-            homerFiles = sortedPaths(dir(fullfile(projectRoot, 'external', 'homer', '**', '*.m')));
+            homerFiles = [sortedPaths(dir(fullfile(projectRoot, 'external', 'homer3', '**', '*.m'))); ...
+                sortedPaths(dir(fullfile(projectRoot, 'external', 'legacy', '**', '*.m')))];
             files = [reconFiles(:); readerFiles; configFiles; homerFiles];
             identity = ssdot.io.valueHash([string(version); obj.filesIdentity(files)]);
         end

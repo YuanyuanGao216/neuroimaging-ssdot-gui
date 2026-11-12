@@ -5,10 +5,12 @@ function environment = initializeEnvironment(root)
     end
 
     addpath(fullfile(root, 'src'));
+    % Stock Homer3 v1.87.0, plus the few AtlasViewer, Homer2 and historical helpers it lacks.
     % Adding Homer's folder tree is slow; skip it when this Homer is already on the path.
-    homer = fullfile(root, 'external', 'homer');
+    homer = fullfile(root, 'external', 'homer3');
     if ~startsWith(string(which('GetExtinctions')), string(homer))
         addpath(genpath(homer));
+        addpath(genpath(fullfile(root, 'external', 'legacy')));
     end
 
     dataRoot = string(getenv('SSDOT_DATA_ROOT'));
@@ -19,7 +21,7 @@ function environment = initializeEnvironment(root)
     paths = ssdot.app.runtimePaths(root);
     ssdot.io.cleanRuntime(paths);
 
-    % This global belongs to bundled Homer, not reconstruction or app state.
+    % This global belongs to Homer3, not reconstruction or app state.
     global logger
     if isempty(logger) || ~isvalid(logger)
         logger = Logger(char(fullfile(paths.logs, compose('History_%d', feature('getpid')))), 1);

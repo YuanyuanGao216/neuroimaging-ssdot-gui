@@ -5,7 +5,8 @@ function audit = auditReconstruction(datasetRoot, recordingName, cacheFile, outp
     % See the exported report for definitions and limits on physiological inference.
     root = fileparts(fileparts(mfilename('fullpath')));
     addpath(fullfile(root, 'src'));
-    addpath(genpath(fullfile(root, 'external', 'homer')));
+    addpath(genpath(fullfile(root, 'external', 'homer3')));
+    addpath(genpath(fullfile(root, 'external', 'legacy')));
 
     datasetRoot = string(java.io.File(char(datasetRoot)).getCanonicalPath());
     outputFolder = string(java.io.File(char(outputFolder)).getCanonicalPath());
