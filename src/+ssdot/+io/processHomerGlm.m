@@ -119,8 +119,8 @@ function [dataYavg, dataYavgstd, nTrials, dataYnew, dataYresid, dataYsum2, betaB
 
         % Exit if there is not enough data to analyze. The factor 3 is arbitrary; it must exceed 1.
         if length(lstInc) < 3*size(A, 2) || nCond == 0
-            warning('Not enough data to find a solution')
-            return
+            warning('Not enough data to find a solution');
+            return;
         end
 
         tb = zeros(nB, nCh, 2, nCond);
@@ -151,7 +151,7 @@ function [dataYavg, dataYavgstd, nTrials, dataYnew, dataYresid, dataYsum2, betaB
                 elseif rco < 10^-25
                     fprintf('Design matrix is VERY poorly scaled...(RCond=%e), cannot perform computation\n', rco);
                     nTrials{iBlk} = expandTrialCounts(nTrials{iBlk}, lstCond, size(s, 2));
-                    return
+                    return;
                 end
 
                 if glmSolveMethod == 1

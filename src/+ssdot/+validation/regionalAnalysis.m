@@ -45,14 +45,14 @@ function [rows, curveRows] = regionRelations(result, temporal, c, roi, modeled, 
         index = selections{k};
         [present, maskPosition] = ismember(index, mask);
         assert(all(present));
-        a = hbo(index);
-        b = hbr(index);
+        regionHbo = hbo(index);
+        regionHbr = hbr(index);
         rows{k} = struct('condition', c, 'region', labels(k), 'nVertices', numel(index), ...
-            'hboMeanM', mean(a), 'hbrMeanM', mean(b), 'hbtMeanM', mean(a + b), ...
-            'spatialPearsonR', ssdot.validation.correlationOf(a, b), ...
-            'hboPositiveHbrNegativeFraction', mean(a > 0 & b < 0), ...
-            'hboNegativeHbrPositiveFraction', mean(a < 0 & b > 0), ...
-            'sameSignFraction', mean(a .* b > 0));
+            'hboMeanM', mean(regionHbo), 'hbrMeanM', mean(regionHbr), 'hbtMeanM', mean(regionHbo + regionHbr), ...
+            'spatialPearsonR', ssdot.validation.correlationOf(regionHbo, regionHbr), ...
+            'hboPositiveHbrNegativeFraction', mean(regionHbo > 0 & regionHbr < 0), ...
+            'hboNegativeHbrPositiveFraction', mean(regionHbo < 0 & regionHbr > 0), ...
+            'sameSignFraction', mean(regionHbo .* regionHbr > 0));
         hboCurve = mean(result.concentrations.intensity_HbO{c}(maskPosition, :), 1)';
         hbrCurve = mean(result.concentrations.intensity_HbR{c}(maskPosition, :), 1)';
         for t = 1:numel(temporal.time)
@@ -63,6 +63,7 @@ function [rows, curveRows] = regionRelations(result, temporal, c, roi, modeled, 
 end
 
 function row = lateralityRow(c, chromophore, values, modeled, hemisphere, area, vertices, legacyMidline)
+    % Count-, area- and integral-based laterality of the half-maximum activation.
     activation = values;
     if chromophore == "HbR"
         activation = -values;
@@ -99,6 +100,7 @@ function row = lateralityRow(c, chromophore, values, modeled, hemisphere, area, 
 end
 
 function row = contrastRow(c, chromophore, values, roi, background)
+    % Exploratory contrast-to-background ratio of the post hoc ROI.
     roiMean = mean(values(roi));
     backgroundStd = std(values(background));
     row = struct('condition', c, 'chromophore', chromophore, 'roiVertices', numel(roi), ...

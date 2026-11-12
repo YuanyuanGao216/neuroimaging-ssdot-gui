@@ -6,9 +6,9 @@ function cnr = calculateCnr(calculatedMat, cfg, Conc)
     intensity = Conc.intensity_HbO{1};
     intensity = intensity(:, peakSample);
 
-    fvhmIndex = find(intensity > 0.5 * max(intensity));
+    fvhmIndex = find(intensity > 0.5*max(intensity));
     cnr.Contrast = max(intensity(fvhmIndex)) - min(intensity(fvhmIndex));
-    cnr.image_CNR = cnr.Contrast / std(intensity);
+    cnr.image_CNR = cnr.Contrast/std(intensity);
 
     atlasViewer = load([cfg.av_data_path, 'atlasViewer.mat']);
     brainVertices = atlasViewer.fwmodel.mesh.vertices;
@@ -29,12 +29,12 @@ function localizationError = weightedLocalizationError(intensity, fvhmIndex, mas
         distance = sqrt((brainVertices(vertex, axesOrder(1)) - center(1)).^2 + ...
             (brainVertices(vertex, axesOrder(2)) - center(2)).^2 + ...
             (brainVertices(vertex, axesOrder(3)) - center(3)).^2);
-        weightedDistanceSum = weightedDistanceSum + weight * distance;
+        weightedDistanceSum = weightedDistanceSum + weight*distance;
         weightSum = weightSum + weight;
     end
     if length(fvhmIndex) == 1
         localizationError = distance;
     else
-        localizationError = weightedDistanceSum / weightSum;
+        localizationError = weightedDistanceSum/weightSum;
     end
 end

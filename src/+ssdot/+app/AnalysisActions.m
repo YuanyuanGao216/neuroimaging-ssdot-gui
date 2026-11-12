@@ -174,6 +174,7 @@ classdef AnalysisActions < handle
 end
 
 function markCancelled(state)
+    %MARKCANCELLED Show that the recording's analysis was cancelled and can be resumed.
     state.status = "Cancelled";
     state.message = "Cancelled. Press Run Analysis to resume.";
 end

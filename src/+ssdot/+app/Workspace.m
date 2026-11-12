@@ -62,6 +62,7 @@ classdef Workspace < handle
         end
 
         function state = stateFor(obj, node)
+            %STATEFOR The state of node, created with the workspace settings on first use.
             key = sprintf('%s:%s:%d:%d:%d:%d', node.type, node.name, node.iGroup, node.iSubj, node.iSess, node.iRun);
             if ~isKey(obj.stateMap, key)
                 state = ssdot.app.ReconstructionState();
@@ -178,6 +179,7 @@ classdef Workspace < handle
         end
 
         function markNotRun(obj, nodes)
+            %MARKNOTRUN Explain why recordings left by a cancelled analysis have no current result.
             for node = nodes
                 state = obj.stateFor(node);
                 if ~obj.isCurrent(state)
@@ -463,6 +465,7 @@ classdef Workspace < handle
         end
 
         function releaseIntermediates(~, state, keepSensitivity)
+            %RELEASEINTERMEDIATES Free a recording's recomputable inputs; keepSensitivity keeps it for the Model tab.
             state.observations = [];
             state.spatialBasis = [];
             if ~keepSensitivity
@@ -598,6 +601,7 @@ function runs = leafRuns(node)
 end
 
 function nodes = nodesWithChildren(node)
+    %NODESWITHCHILDREN node and its descendants that have children: the levels that can be averaged.
     children = ssdot.io.nodeChildren(node);
     nodes = {};
     if isempty(children)
@@ -610,6 +614,7 @@ function nodes = nodesWithChildren(node)
 end
 
 function roi = automaticRoi(state, condition, name, surface, settings)
+    %AUTOMATICROI The findRoi threshold selection of one condition of state's result.
     % findRoi thresholds its first argument; an HbR decrease is selected as -HbR.
     intensity = state.result.hbo(:, condition);
     rule = "HbO increase";
@@ -631,6 +636,7 @@ function roi = automaticRoi(state, condition, name, surface, settings)
 end
 
 function provenance = averageProvenance(reference, members, names, common, omitted, nodeName)
+    %AVERAGEPROVENANCE The reference member's provenance, describing the average and its members instead.
     kinds = struct('RunClass', "recordings", 'SessClass', "sessions", 'SubjClass', "subjects", 'GroupClass', "groups");
     kind = "members";
     if isfield(kinds, class(members(1).node))
@@ -663,6 +669,7 @@ function provenance = averageProvenance(reference, members, names, common, omitt
 end
 
 function text = averageLabel(state)
+    %AVERAGELABEL Shown-list label of an average, with its member count and kind.
     provenance = state.result.provenance;
     text = "Average: " + state.nodeName + " (" + numel(provenance.sourceRecordings) + " " + provenance.sourceKind + ")";
 end
@@ -676,16 +683,19 @@ function names = conditionNamesOf(state)
 end
 
 function key = resultKey(result)
+    %RESULTKEY Hash of the result values, which identifies the result its ROIs belong to.
     key = ssdot.io.valueHash({result.hbo, result.hbr});
 end
 
 function bytes = resultBytes(state)
+    %RESULTBYTES Memory held by state's result, as reported by whos.
     value = state.result; %#ok<NASGU>
     info = whos('value');
     bytes = info.bytes;
 end
 
 function rois = emptyRois()
+    %EMPTYROIS An empty ROI array with the fields of every ROI.
     rois = struct('label', {}, 'indices', {}, 'nonRoiIndices', {}, 'meshId', {}, 'coordinateSystem', {}, ...
         'units', {}, 'source', {});
 end

@@ -16,10 +16,10 @@ function plotHemoglobin(namePrefix, faces, brainVertices, HbO, HbR, cfg, imageFo
     end
     rotations = {'L', 'R'};
 
-    for c = 1:size(HbO, 2)
-        name = sprintf('%s%d', namePrefix, c);
+    for condition = 1:size(HbO, 2)
+        name = sprintf('%s%d', namePrefix, condition);
         fig = figure('Name', name);
-        values = {HbO(:, c), HbR(:, c)};
+        values = {HbO(:, condition), HbR(:, condition)};
         for hb = 1:2
             for side = 1:columns
                 ax = subplot(2, columns, (hb - 1)*columns + side, 'Parent', fig);

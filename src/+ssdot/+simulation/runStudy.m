@@ -57,7 +57,7 @@ function runStudy(options)
     cfg.alpha_list = logspace(-5, -1, 5);
     cfg.beta = 0;
     cfg.regularization = 1; % 1 - without R; 2 - with R; 3 - tSVD
-    cfg.caxis_value = [-1 1] * 1e-5;
+    cfg.caxis_value = [-1 1]*1e-5;
     cfg.loc_line = 'off';
     cfg.av_data_path = cfg.unilateral_data_path;
 

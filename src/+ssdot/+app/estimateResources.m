@@ -52,12 +52,12 @@ function estimate = estimateResources(recording, sensitivity, centers, temporal,
         + normalStoredBytes) + 256 * 2^20;
     gpuPeak = 1.5 * (2 * compressedFullBytes + 4 * smallGramBytes + kernelBytes) + 128 * 2^20;
     if config.regularization == 3
-        % Truncated SVD
+        % Truncated SVD.
         hostPeak = hostPeak + 3 * compressedFullBytes;
         gpuPeak = gpuPeak + 3 * compressedFullBytes;
     end
     if config.alpha == 0 && config.regularization ~= 3
-        % Unregularized normal equations
+        % Unregularized normal equations.
         hostPeak = hostPeak + 4 * normalBytes;
         gpuPeak = gpuPeak + 4 * normalBytes;
     end
@@ -86,6 +86,7 @@ function estimate = estimateResources(recording, sensitivity, centers, temporal,
 end
 
 function available = availableHostMemory()
+    %AVAILABLEHOSTMEMORY Free host bytes, the smaller of MATLAB's and the physical figure; Inf when unknown.
     try
         [userMemory, systemMemory] = memory;
         available = min(userMemory.MemAvailableAllArrays, systemMemory.PhysicalMemory.Available);
@@ -115,5 +116,6 @@ function bytes = usableDiskSpace(folder)
     try
         bytes = double(java.io.File(char(folder)).getUsableSpace());
     catch
+        % Free space unknown: keep Inf.
     end
 end

@@ -7,6 +7,8 @@ function names = conditionNames(state)
     elseif isstruct(state.temporalBasis) && isfield(state.temporalBasis, 'conditionNames')
         names = string(state.temporalBasis.conditionNames);
     end
+
+    % Names that do not match the result columns are replaced by column numbers.
     names = reshape(names, 1, []);
     if numel(names) ~= count
         names = string(1:count);

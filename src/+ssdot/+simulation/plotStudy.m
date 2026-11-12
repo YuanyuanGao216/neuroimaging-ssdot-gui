@@ -1,6 +1,6 @@
 function plotStudy(cfg)
     %PLOTSTUDY Plot one resting channel against each simulated recording, per subject.
-    lightRed = [247 192 192] ./ 255;
+    lightRed = [247 192 192]./255;
     % The simulated OD has a fake SS column inserted at 51, so simulated
     % column 84 is the displayed resting column 83.
     restingColumn = 83;
@@ -44,11 +44,11 @@ function plotStudy(cfg)
             nexttile(tlo)
             hold on;
             for s = 1:length(stimulusSamples)
-                xline(t(stimulusSamples(s)), ':', 'color', [120 120 120] ./ 255, 'linewidth', 1.5);
+                xline(t(stimulusSamples(s)), ':', 'color', [120 120 120]./255, 'linewidth', 1.5);
             end
             plot(t, restingOd, 'color', lightRed);
             plot(t, restingFiltered, 'color', 'r', 'linewidth', 1.5);
-            plot(t, odFiltered, 'color', [0 0 255] ./ 255, 'linewidth', 1.5);
+            plot(t, odFiltered, 'color', [0 0 255]./255, 'linewidth', 1.5);
 
             yticks([-0.05 0.05])
             hold off;
@@ -72,8 +72,8 @@ end
 function filtered = lowPassFilter(signal, t)
     % Display-only third-order 0.5 Hz zero-phase Butterworth.
     cutoffHz = 0.5;
-    samplingRate = 1 / (t(2) - t(1));
-    normalizedCutoff = cutoffHz / (samplingRate / 2);
+    samplingRate = 1/(t(2) - t(1));
+    normalizedCutoff = cutoffHz/(samplingRate/2);
     filterOrder = 3;
     [z, p, k] = butter(filterOrder, normalizedCutoff, 'low');
     [sos, gain] = zp2sos(z, p, k);

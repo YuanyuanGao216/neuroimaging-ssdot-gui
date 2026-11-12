@@ -1,8 +1,8 @@
 function audit = auditReconstruction(datasetRoot, recordingName, cacheFile, outputFolder)
-%AUDITRECONSTRUCTION Inspect an existing Research result without fitting a new one.
-% This research audit targets the current two-condition, two-wavelength model.
-% It exports ordinary numeric MAT variables, CSV tables and a Markdown report.
-% See the exported report for definitions and limits on physiological inference.
+    %AUDITRECONSTRUCTION Inspect an existing Research result without fitting a new one.
+    % This research audit targets the current two-condition, two-wavelength model.
+    % It exports ordinary numeric MAT variables, CSV tables and a Markdown report.
+    % See the exported report for definitions and limits on physiological inference.
     root = fileparts(fileparts(mfilename('fullpath')));
     addpath(fullfile(root, 'src'));
     addpath(genpath(fullfile(root, 'external', 'homer')));
@@ -238,6 +238,7 @@ function audit = auditReconstruction(datasetRoot, recordingName, cacheFile, outp
 end
 
 function node = findRun(nodes, name)
+    % Depth-first search of the Homer hierarchy for the run whose name ends with name.
     node = [];
     for k = 1:numel(nodes)
         if isa(nodes(k), 'RunClass') && endsWith(string(nodes(k).name), string(name))
@@ -320,7 +321,8 @@ function curves = homerSummary(time, values, metadata, channelHemi, pairs, names
 end
 
 function writeText(path, value)
-    file = fopen(path, 'w', 'n', 'UTF-8');
+    % Write one UTF-8 text value followed by a newline.
+    file =fopen(path, 'w', 'n', 'UTF-8');
     assert(file >= 0);
     cleanup = onCleanup(@() fclose(file));
     fprintf(file, '%s\n', value);

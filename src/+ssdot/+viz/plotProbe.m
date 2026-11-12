@@ -17,7 +17,7 @@ function fig = plotProbe(parent, atlas, axesPair)
     ssdot.viz.plotHeadSurface(left, right, atlas);
     positions = atlas.probe.optpos_reg;
     source = positions(1:atlas.probe.nsrc, [2 1 3]);
-    detector = positions(atlas.probe.nsrc+1:end, [2 1 3]);
+    detector = positions(atlas.probe.nsrc + 1:end, [2 1 3]);
 
     for ax = [left right]
         scatter3(ax, source(:, 1), source(:, 2), source(:, 3), 25, 'r', 'filled', 'DisplayName', 'Sources');

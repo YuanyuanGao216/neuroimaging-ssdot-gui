@@ -12,6 +12,7 @@ classdef OverviewView < handle
         end
 
         function refresh(obj, busy)
+            %REFRESH Rebuild the recording table, readiness line and dataset summary.
             workspace = obj.workspace;
             rows = cell(numel(workspace.runs), 7);
             for index = 1:numel(workspace.runs)
@@ -91,6 +92,7 @@ classdef OverviewView < handle
 
     methods (Access = private)
         function text = datasetSummary(obj, report)
+            %DATASETSUMMARY The dataset folder, recording count, model inputs and Homer GLM timing.
             workspace = obj.workspace;
             if isempty(workspace.runs)
                 text = "No dataset open.";

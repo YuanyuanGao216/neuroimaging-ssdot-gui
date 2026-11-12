@@ -108,6 +108,7 @@ classdef AppController < handle
 
         function log(obj, message)
             obj.messages(end + 1) = string(datetime('now', 'Format', 'HH:mm:ss')) + "  " + string(message);
+            % Keep only the latest 500 messages.
             obj.messages = obj.messages(max(1, end - 499):end);
             obj.app.logText.Value = cellstr(obj.messages);
         end
@@ -166,6 +167,7 @@ classdef AppController < handle
         end
 
         function beginWork(obj)
+            %BEGINWORK Mark the window busy and clear any earlier cancellation request.
             assert(~obj.busy, 'SSDOT:Busy', 'A job is already running.');
             obj.busy = true;
             obj.cancelRequested = false;
@@ -180,6 +182,7 @@ classdef AppController < handle
         end
 
         function finishWork(obj)
+            %FINISHWORK End the busy state, or close the window when closing was requested while busy.
             obj.progress.closeLoadDialog();
             obj.progress.stopClock();
             obj.busy = false;

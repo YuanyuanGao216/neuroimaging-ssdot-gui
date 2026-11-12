@@ -7,11 +7,13 @@ classdef SharedCache < handle
         misses = 0
         modelLoads = 0
     end
+
     properties (Access = private)
         entries
         fileHashes
         clock = 0
     end
+
     methods
         function obj = SharedCache(limitBytes)
             if nargin
@@ -50,10 +52,10 @@ classdef SharedCache < handle
             end
             % Evict least recently used entries until the new value fits.
             while obj.bytes + info.bytes > obj.limitBytes && obj.entries.Count > 0
-                keys = obj.entries.keys;
-                lastUses = cellfun(@(name) obj.lastUse(name), keys);
+                entryKeys = obj.entries.keys;
+                lastUses = cellfun(@(name) obj.lastUse(name), entryKeys);
                 [~, oldest] = min(lastUses);
-                obj.evict(keys{oldest});
+                obj.evict(entryKeys{oldest});
             end
 
             obj.clock = obj.clock + 1;
@@ -63,10 +65,10 @@ classdef SharedCache < handle
 
         function releasePreparations(obj)
             % Retain immutable anatomical/model reads; release recomputable workspace.
-            keys = obj.entries.keys;
-            for index = 1:numel(keys)
-                if ~startsWith(keys{index}, 'model:')
-                    obj.evict(keys{index});
+            entryKeys = obj.entries.keys;
+            for index = 1:numel(entryKeys)
+                if ~startsWith(entryKeys{index}, 'model:')
+                    obj.evict(entryKeys{index});
                 end
             end
         end
@@ -109,6 +111,7 @@ classdef SharedCache < handle
             identity = ssdot.io.valueHash([string(version); obj.filesIdentity(files)]);
         end
     end
+
     methods (Access = private)
         function used = lastUse(obj, key)
             item = obj.entries(key);
@@ -124,5 +127,6 @@ classdef SharedCache < handle
 end
 
 function paths = sortedPaths(listing)
+    % Full paths of a dir() listing in sorted order, so file identities do not depend on listing order.
     paths = sort(arrayfun(@(file) string(fullfile(file.folder, file.name)), listing));
 end

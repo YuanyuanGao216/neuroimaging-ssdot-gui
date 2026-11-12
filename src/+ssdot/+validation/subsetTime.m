@@ -1,11 +1,11 @@
 function [model, observations] = subsetTime(model, observations, select)
     %SUBSETTIME Select observations and pre-existing design rows without resampling.
     % Response rows are wavelength blocks, each time-major with channels varying fastest.
-    nt = size(observations.od.w1, 2);
-    n = size(observations.od.w1, 1);
-    index = reshape(1:n * nt, n, nt);
+    nTime = size(observations.od.w1, 2);
+    nChannels = size(observations.od.w1, 1);
+    index = reshape(1:nChannels * nTime, nChannels, nTime);
     index = index(:, select);
-    rows = [index(:); n * nt + index(:)];
+    rows = [index(:); nChannels * nTime + index(:)];
 
     observations.response = observations.response(rows);
     observations.od.w1 = observations.od.w1(:, select);

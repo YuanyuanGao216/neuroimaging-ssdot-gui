@@ -17,7 +17,7 @@ function report = exportFigures(data, folder, options, progress)
         'skipped', strings(0, 1));
     [jobs, report.skipped] = planJobs(data, options);
     if isempty(jobs)
-        return
+        return;
     end
 
     figureSize = [1200 700]; % Default export size (pixels); options.width/height override it.
@@ -357,7 +357,7 @@ function surface = roiSurface(atlas, roi)
         surface = ssdot.io.surfaceFromAtlas(atlas, kind);
         if surface.meshId == string(roi.meshId)
             ssdot.viz.validateRoi(roi, surface);
-            return
+            return;
         end
     end
     error('SSDOT:MeshMismatch', 'ROI does not match either loaded brain mesh.');

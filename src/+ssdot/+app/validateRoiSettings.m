@@ -8,6 +8,7 @@ function settings = validateRoiSettings(settings)
         end
     end
     settings = orderfields(settings, defaults);
+
     settings.signal = string(settings.signal);
     assert(any(settings.signal == ["HbO", "HbR"]), 'SSDOT:RoiSignal', 'Choose HbO or HbR for the ROI rule.');
     for name = ["upperThreshold", "lowerThreshold", "exclusionDistance"]

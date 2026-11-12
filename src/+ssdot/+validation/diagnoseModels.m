@@ -1,24 +1,25 @@
 function diagnostic = diagnoseModels(prepared, result, options, folder, progress)
     %DIAGNOSEMODELS Explicit sensitivity arms, refitted ablations and blocked holdout.
-    cfg = prepared.config;
+    config = prepared.config;
     model = prepared.model;
     observations = prepared.observations;
-    assert(cfg.regularization == 1 && cfg.beta == 0 && cfg.alpha > 0, 'SSDOT:ValidationConfiguration', ...
+    assert(config.regularization == 1 && config.beta == 0 && config.alpha > 0, 'SSDOT:ValidationConfiguration', ...
         'This diagnostic protocol requires standard positive-alpha, beta-zero Research settings.');
 
     progress("Compressing diagnostic design", 0, 1);
     factors = ssdot.recon.factorDesign(model, 'cpu');
-    system = ssdot.recon.compressDesign(factors, observations, cfg);
+    system = ssdot.recon.compressDesign(factors, observations, config);
     nImage = factors.imageColumns;
     nBrainImage = factors.offsets(3);
     penalty = result.solverDiagnostics.imagePenalty;
     compressedRows = numel(system.response);
 
-    ablations = refittedAblations(factors, system, observations, result, cfg, penalty, nImage, nBrainImage, progress);
+    ablations = refittedAblations(factors, system, observations, result, config, penalty, nImage, nBrainImage, ...
+        progress);
     writetable(ablations, fullfile(folder, 'refitted-models.csv'));
     scales = ssdot.validation.designScales(factors, penalty);
     writetable(scales, fullfile(folder, 'model-scales.csv'));
-    [arms, armMaps] = regularizationArms(factors, system, observations, model, result, cfg, ...
+    [arms, armMaps] = regularizationArms(factors, system, observations, model, result, config, ...
         options.alphaValues, progress);
     writetable(arms, fullfile(folder, 'regularization-arms.csv'));
 
@@ -27,13 +28,13 @@ function diagnostic = diagnoseModels(prepared, result, options, folder, progress
     clear system
     [trainModel, trainObservations] = ssdot.validation.subsetTime(model, observations, train);
     progress("Refitting buffered temporal holdout", 0, 1);
-    trained = ssdot.recon.reconstructImage(trainModel, trainObservations, cfg);
+    trained = ssdot.recon.reconstructImage(trainModel, trainObservations, config);
     trainFactors = ssdot.recon.factorDesign(trainModel, 'cpu');
-    trainSystem = ssdot.recon.compressDesign(trainFactors, trainObservations, cfg);
+    trainSystem = ssdot.recon.compressDesign(trainFactors, trainObservations, config);
     trainPenalty = trained.solverDiagnostics.imagePenalty;
-    noBrain = ssdot.validation.refitReduced(trainSystem, nBrainImage + 1:nImage, cfg, trainPenalty);
-    nuisance = ssdot.validation.refitReduced(trainSystem, [], cfg, trainPenalty);
-    targets = independentTargets(prepared, cfg);
+    noBrain = ssdot.validation.refitReduced(trainSystem, nBrainImage + 1:nImage, config, trainPenalty);
+    nuisance = ssdot.validation.refitReduced(trainSystem, [], config, trainPenalty);
+    targets = independentTargets(prepared, config);
     held = holdoutScores(factors, observations, {trained.coefficients(:), noBrain, nuisance}, train, test, ...
         targets, prepared.probe.wavelengths, options.holdoutBufferSeconds);
     writetable(held, fullfile(folder, 'buffered-holdout.csv'));
@@ -55,11 +56,11 @@ function diagnostic = diagnoseModels(prepared, result, options, folder, progress
     ssdot.validation.writeJson(fullfile(folder, 'diagnostics.json'), diagnostic);
 end
 
-function ablations = refittedAblations(factors, system, observations, result, cfg, penalty, nImage, ...
+function ablations = refittedAblations(factors, system, observations, result, config, penalty, nImage, ...
         nBrainImage, progress)
     % Full model plus refitted no-brain, no-scalp and nuisance-only models.
     variants = {"Full", 1:nImage, result.coefficients(:); ...
-        "No brain", nBrainImage+1:nImage, []; ...
+        "No brain", nBrainImage + 1:nImage, []; ...
         "No scalp", 1:nBrainImage, []; ...
         "Nuisance only", [], []};
     rows = cell(1, size(variants, 1));
@@ -67,7 +68,7 @@ function ablations = refittedAblations(factors, system, observations, result, cf
         progress("Refitting " + variants{k, 1}, k, size(variants, 1));
         coefficients = variants{k, 3};
         if isempty(coefficients)
-            coefficients = ssdot.validation.refitReduced(system, variants{k, 2}, cfg, penalty);
+            coefficients = ssdot.validation.refitReduced(system, variants{k, 2}, config, penalty);
         end
         predicted = ssdot.recon.applyFactorizedDesign(factors, observations, coefficients, false);
         residual = observations.response - predicted;
@@ -79,30 +80,31 @@ function ablations = refittedAblations(factors, system, observations, result, cf
     ablations.sseReductionVersusNoBrain = (ablations.sse(2) - ablations.sse) / ablations.sse(2);
 end
 
-function [arms, armMaps] = regularizationArms(factors, system, observations, model, result, cfg, alphaValues, progress)
+function [arms, armMaps] = regularizationArms(factors, system, observations, model, result, config, alphaValues, ...
+        progress)
     % Labeled sensitivity experiments at fixed alternative alphas; none is selected.
     rows = {};
     armMaps = struct('alpha', {}, 'hbo', {}, 'hbr', {});
     for k = 1:numel(alphaValues)
         alpha = alphaValues(k);
         progress("Regularization sensitivity", k, numel(alphaValues));
-        if alpha == cfg.alpha
+        if alpha == config.alpha
             coefficients = result.coefficients(:);
             maps = result;
             solverDiagnostics = result.solverDiagnostics;
         else
-            armConfig = cfg;
+            armConfig = config;
             armConfig.alpha = alpha;
             [coefficients, ~, ~, solverDiagnostics] = ssdot.recon.solveCompressed(system, armConfig);
             coefficients = coefficients(:);
-            conc = ssdot.recon.reconstructConcentrations(model.spatialBasis, model.temporalBasis, coefficients, ...
-                1, false, 'cpu');
-            conc = ssdot.recon.applyOutputScaling(conc, model, armConfig);
-            projection = struct('T', model.temporalBasis, 'M', model.masks, 'Conc', conc);
+            concentrations = ssdot.recon.reconstructConcentrations(model.spatialBasis, model.temporalBasis, ...
+                coefficients, 1, false, 'cpu');
+            concentrations = ssdot.recon.applyOutputScaling(concentrations, model, armConfig);
+            projection = struct('T', model.temporalBasis, 'M', model.masks, 'Conc', concentrations);
             [maps.hbo, maps.hbr] = ssdot.recon.projectToVertices(projection, model.vertexCount);
         end
         predicted = ssdot.recon.applyFactorizedDesign(factors, observations, coefficients, false);
-        rows{k} = struct('alpha', alpha, 'baseline', alpha == cfg.alpha, ...
+        rows{k} = struct('alpha', alpha, 'baseline', alpha == config.alpha, ...
             'imagePenalty', solverDiagnostics.imagePenalty, 'sse', sum((predicted - observations.response).^2), ...
             'hboMaxAbsM', max(abs(maps.hbo), [], 'all'), 'hbrMaxAbsM', max(abs(maps.hbr), [], 'all'), ...
             'coefficientNorm', norm(coefficients)); %#ok<AGROW>
@@ -122,28 +124,29 @@ function [train, test] = bufferedHoldoutSplit(time, options)
         'Insufficient buffered training/test samples.');
 end
 
-function targets = independentTargets(prepared, cfg)
+function targets = independentTargets(prepared, config)
     % Evaluate only targets absent from the short-channel regressor. Otherwise
     % the target itself could leak into the measured SS predictor.
-    ml = prepared.probe.measurementList;
+    measurementList = prepared.probe.measurementList;
     channels = prepared.sensitivity.channels;
-    separation = vecnorm(prepared.probe.sourcePositions(ml(channels, 1), :) - ...
-        prepared.probe.detectorPositions(ml(channels, 2), :), 2, 2);
-    targets = find(separation >= cfg.shortSeparationThreshold);
+    separation = vecnorm(prepared.probe.sourcePositions(measurementList(channels, 1), :) - ...
+        prepared.probe.detectorPositions(measurementList(channels, 2), :), 2, 2);
+    targets = find(separation >= config.shortSeparationThreshold);
     assert(~isempty(targets), 'SSDOT:ValidationTargets', 'No targets independent of the SS mean.');
 end
 
 function held = holdoutScores(factors, observations, coefficients, train, test, targets, wavelengths, bufferSeconds)
+    % Test-sample prediction error of each model on the independent target channels.
     names = ["Full", "No brain", "Nuisance only"];
-    n = factors.channels;
-    nt = factors.timeCount;
+    nChannels = factors.channels;
+    nTime = factors.timeCount;
     rows = {};
     for k = 1:3
         predicted = ssdot.recon.applyFactorizedDesign(factors, observations, coefficients{k}, false);
         for w = 1:2
-            vectorRows = (w - 1) * n * nt + (1:n * nt);
-            observedOd = reshape(observations.response(vectorRows), n, nt)';
-            predictedOd = reshape(predicted(vectorRows), n, nt)';
+            vectorRows = (w - 1) * nChannels * nTime + (1:nChannels * nTime);
+            observedOd = reshape(observations.response(vectorRows), nChannels, nTime)';
+            predictedOd = reshape(predicted(vectorRows), nChannels, nTime)';
             truth = observedOd(test, targets);
             residual = truth - predictedOd(test, targets);
             baseline = mean(observedOd(train, targets));

@@ -33,7 +33,7 @@ function [tbasis, nB] = constructBasisFunctions(idxBasis, paramsBasis, trange, n
             tau = paramsBasis((chromophore - 1)*stride + 1);
             sigma = paramsBasis((chromophore - 1)*stride + 2);
 
-            tbasis(:, 1, chromophore) = (exp(1)*(tHRF - tau).^2/sigma^2) .* exp(-(tHRF - tau).^2/sigma^2);
+            tbasis(:, 1, chromophore) = (exp(1)*(tHRF - tau).^2/sigma^2).*exp(-(tHRF - tau).^2/sigma^2);
             negativeTimes = find(tHRF < 0);
             tbasis(negativeTimes, 1, chromophore) = 0;
 
@@ -60,9 +60,9 @@ function [tbasis, nB] = constructBasisFunctions(idxBasis, paramsBasis, trange, n
             tau = paramsBasis((chromophore - 1)*stride + 1);
             sigma = paramsBasis((chromophore - 1)*stride + 2);
 
-            tbasis(:, 1, chromophore) = (exp(1)*(tHRF - tau).^2/sigma^2) .* exp(-(tHRF - tau).^2/sigma^2);
+            tbasis(:, 1, chromophore) = (exp(1)*(tHRF - tau).^2/sigma^2).*exp(-(tHRF - tau).^2/sigma^2);
             tbasis(:, 2, chromophore) = 2*exp(1)*((tHRF - tau)/sigma^2 - (tHRF - tau).^3/sigma^4) ...
-                .* exp(-(tHRF - tau).^2/sigma^2);
+                .*exp(-(tHRF - tau).^2/sigma^2);
 
             if tHRF(1) < tau
                 tbasis(1:round((tau - tHRF(1))/dt), 1:2, chromophore) = 0;
@@ -83,7 +83,7 @@ function [tbasis, nB] = constructBasisFunctions(idxBasis, paramsBasis, trange, n
             p = paramsBasis((chromophore - 1)*2 + 1);
             q = paramsBasis((chromophore - 1)*2 + 2);
 
-            tbasis(:, 1, chromophore) = (tHRF/(p*q)).^p.* exp(p - tHRF/q);
+            tbasis(:, 1, chromophore) = (tHRF/(p*q)).^p.*exp(p - tHRF/q);
         end
     end
 end

@@ -20,6 +20,7 @@ function filename = chooseSaveFile(filter, titleText, initial)
 end
 
 function path = selection(name, folder)
+    %SELECTION The chosen path as a string; "" when the dialog was cancelled.
     if isequal(name, 0)
         path = "";
     elseif nargin < 2

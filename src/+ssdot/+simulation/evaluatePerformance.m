@@ -47,8 +47,8 @@ function output = evaluatePerformance(GHbOMat, GHbRMat, hbOSZero, hbRSZero, cfg,
     output.std_HbR2 = stdSubjHbR;
 
     %% SBR
-    output.SBR_HbO = mean(abs(mean(GHbOMat(indexROI, :, :), 1) ./ std(GHbOMat(indexNonROI, :, :), [], 1)), 3);
-    output.SBR_HbR = mean(abs(mean(GHbRMat(indexROI, :, :), 1) ./ std(GHbRMat(indexNonROI, :, :), [], 1)), 3);
+    output.SBR_HbO = mean(abs(mean(GHbOMat(indexROI, :, :), 1)./std(GHbOMat(indexNonROI, :, :), [], 1)), 3);
+    output.SBR_HbR = mean(abs(mean(GHbRMat(indexROI, :, :), 1)./std(GHbRMat(indexNonROI, :, :), [], 1)), 3);
 
     %% Laterality index
     if isExperimental
@@ -56,7 +56,7 @@ function output = evaluatePerformance(GHbOMat, GHbRMat, hbOSZero, hbRSZero, cfg,
         rightHemiIdx = find(brainVertices(:, 1) <= 130);
         nSubjects = size(GHbOMat, 3);
         liSubjHbO = zeros(nSubjects, 1);
-        liSubjHbR = zeros(size(GHbRMat, 3), 1);
+        liSubjHbR = zeros(nSubjects, 1);
         for i = 1:nSubjects
             liSubjHbO(i) = findLI(squeeze(GHbOMat(:, :, i)), leftHemiIdx, rightHemiIdx, conditionIndex);
             liSubjHbR(i) = findLI(-squeeze(GHbRMat(:, :, i)), leftHemiIdx, rightHemiIdx, conditionIndex);
@@ -70,7 +70,7 @@ function output = evaluatePerformance(GHbOMat, GHbRMat, hbOSZero, hbRSZero, cfg,
     %% Positional error (simulation only)
     if ~isExperimental
         intensity = concMeanHbO(M.mask_brain);
-        fvhmIndex = find(intensity > 0.5 * max(intensity));
+        fvhmIndex = find(intensity > 0.5*max(intensity));
         output.positional_error_HbO = weightedLocalizationError(intensity, fvhmIndex, M.mask_brain, ...
             brainVertices, cfg.center);
         output.positional_error_HbR = output.positional_error_HbO;
@@ -135,7 +135,7 @@ function [tValue, meanSubj, stdSubj] = groupTValue(GMat, vertices)
     voxelAverage = mean(GMat(vertices, :, :), 1);
     stdSubj = squeeze(std(voxelAverage, [], 3, 'omitnan'));
     meanSubj = squeeze(mean(voxelAverage, 3, 'omitnan'));
-    tValue = meanSubj / (stdSubj / sqrt(size(GMat, 3)));
+    tValue = meanSubj./(stdSubj/sqrt(size(GMat, 3)));
 end
 
 function localizationError = weightedLocalizationError(intensity, fvhmIndex, maskBrain, brainVertices, center)
@@ -150,25 +150,28 @@ function localizationError = weightedLocalizationError(intensity, fvhmIndex, mas
         distance = sqrt((brainVertices(vertex, axesOrder(1)) - center(1)).^2 + ...
             (brainVertices(vertex, axesOrder(2)) - center(2)).^2 + ...
             (brainVertices(vertex, axesOrder(3)) - center(3)).^2);
-        weightedDistanceSum = weightedDistanceSum + weight * distance;
+        weightedDistanceSum = weightedDistanceSum + weight*distance;
         weightSum = weightSum + weight;
     end
     if length(fvhmIndex) == 1
         localizationError = distance;
     else
-        localizationError = weightedDistanceSum / weightSum;
+        localizationError = weightedDistanceSum/weightSum;
     end
 end
 
 function LI = findLI(values, leftHemiIdx, rightHemiIdx, conditionIndex)
     % LI = (C - I) / (C + I) from contralateral/ipsilateral counts above half maximum.
-    aboveHalfMax = find(values > 0.5 * max(values));
+    aboveHalfMax = find(values > 0.5*max(values));
     if conditionIndex == 1
         contralateral = length(intersect(aboveHalfMax, rightHemiIdx));
         ipsilateral = length(intersect(aboveHalfMax, leftHemiIdx));
     elseif conditionIndex == 2
         contralateral = length(intersect(aboveHalfMax, leftHemiIdx));
         ipsilateral = length(intersect(aboveHalfMax, rightHemiIdx));
+    else
+        error('SSDOT:LateralityCondition', ...
+            'The laterality index is defined only for condition 1 or 2, not condition %d.', conditionIndex);
     end
-    LI = (contralateral - ipsilateral) / (contralateral + ipsilateral);
+    LI = (contralateral - ipsilateral)/(contralateral + ipsilateral);
 end

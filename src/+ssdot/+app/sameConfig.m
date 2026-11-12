@@ -6,6 +6,7 @@ function equal = sameConfig(first, second)
     if ~equal
         return;
     end
+
     for name = string(fieldnames(first))'
         a = first.(name);
         b = second.(name);
@@ -21,5 +22,6 @@ function equal = sameConfig(first, second)
 end
 
 function result = isText(value)
+    %ISTEXT True for a string or character array.
     result = isstring(value) || ischar(value);
 end

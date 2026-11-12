@@ -76,6 +76,7 @@ classdef ProgressDisplay < handle
         end
 
         function startStage(obj, index, state)
+            %STARTSTAGE Mark a stage running and name it, with the recording, in the panel and status line.
             obj.currentStage = index;
             obj.stageStartedAt = tic;
             obj.setStageStatus(index, 'Running');

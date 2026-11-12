@@ -221,6 +221,7 @@ save(fullfile(folder, 'comparison.mat'), 'metrics', 'results', 'cfg', 'commit', 
 fprintf('Completed comparison: %s\n', folder);
 
 function result = comparison(name, a, b)
+    % Agreement metrics of two equally sized arrays over their finite entries.
     assert(isequal(size(a), size(b)), 'Size mismatch in %s', name);
     a = double(a(:));
     b = double(b(:));

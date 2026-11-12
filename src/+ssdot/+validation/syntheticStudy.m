@@ -9,7 +9,7 @@ function study = syntheticStudy(prepared, atlas, baseline, options, folder, prog
     assert(isempty(dir(fullfile(folder, 'case-*.mat'))), 'SSDOT:ValidationExists', ...
         'Synthetic output folder already contains results.');
 
-    cfg = prepared.config;
+    config = prepared.config;
     model = prepared.model;
     probe = prepared.probe;
     sensitivity = prepared.sensitivity;
@@ -32,37 +32,39 @@ function study = syntheticStudy(prepared, atlas, baseline, options, folder, prog
     rows = {};
     failures = {};
     for k = 1:numel(cases)
-        c = cases{k};
-        progress("Ground truth " + k + "/" + numel(cases) + ": " + c.name, k - 1, numel(cases));
+        caseSpec = cases{k};
+        progress("Ground truth " + k + "/" + numel(cases) + ": " + caseSpec.name, k - 1, numel(cases));
         rowCount = numel(rows);
         try
             % One stream per case; brainSignal draws before phaseSurrogate.
-            stream = RandStream('mt19937ar', 'Seed', c.seed);
+            stream = RandStream('mt19937ar', 'Seed', caseSpec.seed);
             [brainOd, truthHbo, truthHbr, trueHboHrf, trueHbrHrf, truthCenters] = ...
-                brainSignal(c, prepared, vertices, centers, stream);
-            t = prepared.recording.time(:);
-            [scalpOd, scalpHboAmplitudeM] = superficialSignal(c, t, model, atlas, sensitivity, nTime, nPairs);
+                brainSignal(caseSpec, prepared, vertices, centers, stream);
+            recordingTime = prepared.recording.time(:);
+            [scalpOd, scalpHboAmplitudeM] = superficialSignal(caseSpec, recordingTime, model, atlas, sensitivity, ...
+                nTime, nPairs);
             % OD-scale drift is separate from chromophore-space superficial truth.
-            time = (t - t(1)) / (t(end) - t(1));
-            drift = (.005 * time + .002 * (time.^2 - mean(time.^2))) * linspace(.8, 1.2, 2 * nPairs);
-            noise = phaseSurrogate(residual, stream) * c.noise;
+            normalizedTime = (recordingTime - recordingTime(1)) / (recordingTime(end) - recordingTime(1));
+            drift = (.005 * normalizedTime + .002 * (normalizedTime.^2 - mean(normalizedTime.^2))) ...
+                * linspace(.8, 1.2, 2 * nPairs);
+            noise = phaseSurrogate(residual, stream) * caseSpec.noise;
 
             recording = prepared.recording;
             recording.od = brainOd + scalpOd + drift + noise;
-            observation = ssdot.recon.buildObservations(recording, sensitivity, probe, model.temporalBasis, cfg);
-            reconstructed = ssdot.recon.reconstructImage(model, observation, cfg, ...
+            observation = ssdot.recon.buildObservations(recording, sensitivity, probe, model.temporalBasis, config);
+            reconstructed = ssdot.recon.reconstructImage(model, observation, config, ...
                 @(label, done, total) progress("Ground truth: " + label, k - 1, numel(cases)));
 
             signalRms = struct('noise', sqrt(mean(noise.^2, 'all')), 'brain', sqrt(mean(brainOd.^2, 'all')), ...
                 'superficial', sqrt(mean(scalpOd.^2, 'all')));
-            rows = [rows, caseMetrics(k, c, {truthHbo, truthHbr}, {reconstructed.hbo, reconstructed.hbr}, ...
+            rows = [rows, caseMetrics(k, caseSpec, {truthHbo, truthHbr}, {reconstructed.hbo, reconstructed.hbr}, ...
                 mask, vertices(mask, :), truthCenters, options, signalRms)]; %#ok<AGROW>
 
             hbo = reconstructed.hbo;
             hbr = reconstructed.hbr;
             coefficients = reconstructed.coefficients;
-            configuration = ssdot.validation.portableData(c);
-            sourceConfig = ssdot.validation.portableData(cfg);
+            configuration = ssdot.validation.portableData(caseSpec);
+            sourceConfig = ssdot.validation.portableData(config);
             save(fullfile(folder, sprintf('case-%02d.mat', k)), 'hbo', 'hbr', 'truthHbo', 'truthHbr', ...
                 'trueHboHrf', 'trueHbrHrf', 'coefficients', 'truthCenters', 'configuration', 'sourceConfig', ...
                 'scalpHboAmplitudeM', '-v7');
@@ -71,7 +73,7 @@ function study = syntheticStudy(prepared, atlas, baseline, options, folder, prog
             if strcmp(exception.identifier, 'SSDOT:ValidationCancelled')
                 rethrow(exception);
             end
-            failures{end + 1} = struct('caseId', k, 'scenario', c.name, 'identifier', exception.identifier, ...
+            failures{end + 1} = struct('caseId', k, 'scenario', caseSpec.name, 'identifier', exception.identifier, ...
                 'message', exception.message); %#ok<AGROW>
         end
 
@@ -112,13 +114,13 @@ function centers = sourceCenters(atlas, vertices, mask, sensitivity)
     modeled = ismember((1:size(vertices, 1))', mask);
     left = find(isLeft & modeled);
     right = find(~isLeft & modeled);
-    [~, p] = max(sensitivitySum(left));
-    centers(1, :) = vertices(left(p), :);
-    [~, p] = max(sensitivitySum(right));
-    centers(2, :) = vertices(right(p), :);
+    [~, position] = max(sensitivitySum(left));
+    centers(1, :) = vertices(left(position), :);
+    [~, position] = max(sensitivitySum(right));
+    centers(2, :) = vertices(right(position), :);
     candidates = left(vecnorm(vertices(left, :) - centers(1, :), 2, 2) > 30);
-    [~, p] = max(sensitivitySum(candidates));
-    centers(3, :) = vertices(candidates(p), :);
+    [~, position] = max(sensitivitySum(candidates));
+    centers(3, :) = vertices(candidates(position), :);
 end
 
 function residual = baselineResidual(prepared, baseline, nPairs, nTime)
@@ -155,15 +157,16 @@ function cases = scenarioList(noiseSeeds)
     cases{end + 1} = scenario("negative HbO positive HbR", "topHat", -1e-6, 1, 1, 42, false, false);
 end
 
-function c = scenario(name, shape, amplitude, noise, superficial, seed, perturb, multiple)
-    c = struct('name', name, 'shape', shape, 'amplitude', amplitude, 'noise', noise, 'superficial', superficial, ...
-        'seed', seed, 'perturb', perturb, 'multiple', multiple, 'taskScalp', false);
+function caseSpec = scenario(name, shape, amplitude, noise, superficial, seed, perturb, multiple)
+    % One simulated case; see scenarioList for the meaning of each argument.
+    caseSpec = struct('name', name, 'shape', shape, 'amplitude', amplitude, 'noise', noise, ...
+        'superficial', superficial, 'seed', seed, 'perturb', perturb, 'multiple', multiple, 'taskScalp', false);
 end
 
-function [scalpOd, scalpHboAmplitudeM] = superficialSignal(c, t, model, atlas, sensitivity, nTime, nPairs)
+function [scalpOd, scalpHboAmplitudeM] = superficialSignal(caseSpec, t, model, atlas, sensitivity, nTime, nPairs)
     % Smooth scalp physiology, optionally task-correlated, scaled to a fixed OD RMS.
     physiology = sin(2 * pi * .07 * t) + .3 * sin(2 * pi * .015 * t + .4);
-    if c.taskScalp
+    if caseSpec.taskScalp
         physiology = physiology + sum(model.temporalBasis.T_HbO_scalp, 2);
     end
 
@@ -171,7 +174,7 @@ function [scalpOd, scalpHboAmplitudeM] = superficialSignal(c, t, model, atlas, s
     scalpOd = zeros(nTime, 2 * nPairs);
     for w = 1:2
         E = sensitivity.E(w, 1:2);
-        amplitude = 2e-6 * c.superficial;
+        amplitude = 2e-6 * caseSpec.superficial;
         scalpProjection = double(sensitivity.Adot_scalp_orig(:, :, w)) * scalpShape;
         scalpOd(:, (w - 1) * nPairs + (1:nPairs)) = physiology * ...
             (scalpProjection' * (E(1) * amplitude - E(2) * amplitude * .3));
@@ -179,20 +182,20 @@ function [scalpOd, scalpHboAmplitudeM] = superficialSignal(c, t, model, atlas, s
 
     % Select a known nuisance concentration to match an independently
     % specified OD scale, not an outcome-dependent recovery target.
-    nuisanceScale = (.02 * c.superficial) / sqrt(mean(scalpOd.^2, 'all'));
+    nuisanceScale = (.02 * caseSpec.superficial) / sqrt(mean(scalpOd.^2, 'all'));
     scalpOd = scalpOd * nuisanceScale;
-    scalpHboAmplitudeM = 2e-6 * c.superficial * nuisanceScale;
+    scalpHboAmplitudeM = 2e-6 * caseSpec.superficial * nuisanceScale;
 end
 
-function rows = caseMetrics(caseId, c, truth, maps, mask, modeledVertices, truthCenters, options, signalRms)
+function rows = caseMetrics(caseId, caseSpec, truth, maps, mask, modeledVertices, truthCenters, options, signalRms)
     % Recovery, localization and false-positive metrics per condition and chromophore.
     chromophores = ["HbO", "HbR"];
-    negative = c.amplitude == 0;
+    negative = caseSpec.amplitude == 0;
     rows = {};
     for condition = 1:2
-        for h = 1:2
-            truthValues = truth{h}(:, condition);
-            recovered = maps{h}(:, condition);
+        for chromophoreIndex = 1:2
+            truthValues = truth{chromophoreIndex}(:, condition);
+            recovered = maps{chromophoreIndex}(:, condition);
             inMask = ismember((1:numel(truthValues))', mask);
             trueMagnitude = max(abs(truthValues));
             roi = abs(truthValues) > .5 * trueMagnitude & inMask;
@@ -208,15 +211,15 @@ function rows = caseMetrics(caseId, c, truth, maps, mask, modeledVertices, truth
             contrast = NaN;
             if ~negative
                 % HbR is simulated with the opposite sign of HbO.
-                direction = sign(c.amplitude);
-                if h == 2
+                direction = sign(caseSpec.amplitude);
+                if chromophoreIndex == 2
                     direction = -direction;
                 end
                 recovery = mean(recovered(roi)) / mean(truthValues(roi));
                 spatialR = ssdot.validation.correlationOf(recovered(mask), truthValues(mask));
-                [value, p] = max(direction * recovered(mask));
+                [value, peakIndex] = max(direction * recovered(mask));
                 if value > 1e-12
-                    localization = min(vecnorm(truthCenters{condition} - modeledVertices(p, :), 2, 2));
+                    localization = min(vecnorm(truthCenters{condition} - modeledVertices(peakIndex, :), 2, 2));
                 end
                 predictedRoi = direction * recovered > 0.5 * max(direction * recovered(mask));
                 predictedRoi = predictedRoi & inMask;
@@ -229,8 +232,9 @@ function rows = caseMetrics(caseId, c, truth, maps, mask, modeledVertices, truth
                     && spatialR >= options.spatialCorrelationThreshold;
             end
 
-            rows{end + 1} = struct('caseId', caseId, 'scenario', c.name, 'seed', c.seed, 'condition', condition, ...
-                'chromophore', chromophores(h), 'negativeControl', negative, 'truthPeakM', trueMagnitude, ...
+            rows{end + 1} = struct('caseId', caseId, 'scenario', caseSpec.name, 'seed', caseSpec.seed, ...
+                'condition', condition, 'chromophore', chromophores(chromophoreIndex), ...
+                'negativeControl', negative, 'truthPeakM', trueMagnitude, ...
                 'estimatedMaxAbsM', max(abs(recovered(mask))), 'roiMeanAmplitudeRatio', recovery, ...
                 'localizationErrorMm', localization, 'spatialPearsonR', spatialR, 'supportDice50', dice, ...
                 'rmseM', sqrt(mean((recovered(mask) - truthValues(mask)).^2)), ...
@@ -241,42 +245,42 @@ function rows = caseMetrics(caseId, c, truth, maps, mask, modeledVertices, truth
     end
 end
 
-function [od, hbo, hbr, hboHrf, hbrHrf, locations] = brainSignal(c, prepared, vertices, centers, stream)
+function [od, hbo, hbr, hboHrf, hbrHrf, locations] = brainSignal(caseSpec, prepared, vertices, centers, stream)
     % Brain OD of the scenario's known source, and its truth maps and HRFs.
     S = prepared.sensitivity;
     G = prepared.model.spatialBasis;
     T = prepared.model.temporalBasis;
 
-    hbo =zeros(size(vertices, 1), 2);
+    hbo = zeros(size(vertices, 1), 2);
     hbr = hbo;
     locations = cell(1, 2);
     for condition = 1:2
         center = centers(condition, :);
-        if c.shape == "alternate" && condition == 1
+        if caseSpec.shape == "alternate" && condition == 1
             center = centers(3, :);
         end
         locations{condition} = center;
-        if c.shape == "basis"
-            [~, k] = min(vecnorm(prepared.centers.brain - center, 2, 2));
+        if caseSpec.shape == "basis"
+            [~, kernel] = min(vecnorm(prepared.centers.brain - center, 2, 2));
             spatial = zeros(size(vertices, 1), 1);
-            spatial(S.M.mask_brain) = G.G_brain(k, :)' / max(G.G_brain(k, :));
+            spatial(S.M.mask_brain) = G.G_brain(kernel, :)' / max(G.G_brain(kernel, :));
         else
             spatial = double(vecnorm(vertices - center, 2, 2) < 10);
         end
-        if c.multiple
+        if caseSpec.multiple
             other = centers(3 - condition, :);
             spatial = spatial + .6 * double(vecnorm(vertices - other, 2, 2) < 10);
             locations{condition} = [center; other];
         end
-        hbo(:, condition) = c.amplitude * spatial;
-        hbr(:, condition) = -.3 * c.amplitude * spatial;
+        hbo(:, condition) = caseSpec.amplitude * spatial;
+        hbr(:, condition) = -.3 * caseSpec.amplitude * spatial;
     end
 
     hboHrf = T.t_HbO_brain;
     hbrHrf = T.t_HbR_brain;
     designO = T.T_HbO_brain;
     designR = T.T_HbR_brain;
-    if c.shape == "doubleGamma"
+    if caseSpec.shape == "doubleGamma"
         time = T.time;
         positive = max(time, 0);
         hboHrf = (positive.^5 .* exp(-positive) - .15 * positive.^12 .* exp(-positive) / prod(6:12));
@@ -292,10 +296,10 @@ function [od, hbo, hbr, hboHrf, hbrHrf, locations] = brainSignal(c, prepared, ve
     nPairs = size(od, 2) / 2;
     for w = 1:2
         A = double(S.Adot_orig(:, :, w));
-        if c.perturb
+        if caseSpec.perturb
             A = A(:, prepared.syntheticMapping) .* (1 + .05 * randn(stream, size(A, 1), 1));
         end
-        if c.shape == "basis"
+        if caseSpec.shape == "basis"
             % This control deliberately uses the exact fitted spatial/optical model.
             amplitudesO = double(S.A.Amatrix_brain.(sprintf('w%d_HbO', w))) * hbo(S.M.mask_brain, :);
             amplitudesR = double(S.A.Amatrix_brain.(sprintf('w%d_HbR', w))) * hbr(S.M.mask_brain, :);
@@ -318,8 +322,8 @@ function design = eventDesign(recording, time, hrf)
     dt = median(diff(recording.time));
     design = zeros(numel(recording.time), 2);
     enabled = find(any(recording.stimulusStates == 1, 1));
-    for c = 1:2
-        events = recording.stimuli(enabled(c)).events;
+    for condition = 1:2
+        events = recording.stimuli(enabled(condition)).events;
         onset = zeros(numel(recording.time), 1);
         for k = 1:size(events, 1)
             if events(k, 3) ~= 1
@@ -334,16 +338,16 @@ function design = eventDesign(recording, time, hrf)
             span = start:min(numel(onset), start + duration - 1);
             onset(span) = onset(span) + events(k, 3) / duration;
         end
-        y = conv(onset, hrf);
-        design(:, c) = y(1:numel(onset));
+        convolved = conv(onset, hrf);
+        design(:, condition) = convolved(1:numel(onset));
     end
 end
 
 function noise = phaseSurrogate(residual, stream)
     % Randomize Fourier phases (conjugate-symmetric, shared across columns) of the residual.
-    nt = size(residual, 1);
-    phase = ones(nt, 1);
-    count = floor((nt - 1) / 2);
+    nSamples = size(residual, 1);
+    phase = ones(nSamples, 1);
+    count = floor((nSamples - 1) / 2);
     values = exp(1i * 2 * pi * rand(stream, count, 1));
     phase(2:count + 1) = values;
     phase(end - count + 1:end) = conj(flipud(values));

@@ -49,7 +49,7 @@ end
 
 function assertForwardModel(cfg, atlas, measurementCount)
     model = ssdot.io.loadForwardModel(cfg.unilateral_data_path, atlas);
-    assert(size(model.brain, 1) * 2 == measurementCount && size(model.scalp, 1) * 2 == measurementCount, ...
+    assert(size(model.brain, 1)*2 == measurementCount && size(model.scalp, 1)*2 == measurementCount, ...
         'SSDOT:SensitivityChannels', 'Forward model and unilateral reference channel counts differ.');
 end
 

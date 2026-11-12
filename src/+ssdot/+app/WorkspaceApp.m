@@ -147,6 +147,7 @@ classdef WorkspaceApp < matlab.apps.AppBase
         end
 
         function setBusy(app, busy)
+            %SETBUSY Disable inputs, settings and ROI controls while an analysis runs.
             enable = onOff(~busy);
             for index = 1:numel(app.inputControls)
                 app.inputControls{index}.Enable = enable;
@@ -215,6 +216,7 @@ classdef WorkspaceApp < matlab.apps.AppBase
         end
 
         function clearDataViews(app)
+            %CLEARDATAVIEWS Empty every plot and reset the Results controls to their no-result state.
             for ax = [app.signalAxesStore, app.modelAxesStore, app.resultAxes]
                 delete(findall(ax, 'Type', 'light'));
                 cla(ax, 'reset');
@@ -230,6 +232,7 @@ classdef WorkspaceApp < matlab.apps.AppBase
         end
 
         function refreshSettings(app, config)
+            %REFRESHSETTINGS Show a configuration in the Settings tab; absent fields are left blank.
             names = fieldnames(app.settings);
             for index = 1:numel(names)
                 name = names{index};
@@ -389,7 +392,7 @@ classdef WorkspaceApp < matlab.apps.AppBase
                 'VerticalAlignment', 'top');
 
             % Progress
-            app.stageLabel =uilabel(grid, 'Text', 'No analysis running.', 'WordWrap', 'on');
+            app.stageLabel = uilabel(grid, 'Text', 'No analysis running.', 'WordWrap', 'on');
             % Empty MajorTicks makes exportapp hang in R2026b; keep two labelled ticks.
             app.progressGauge = uigauge(grid, 'linear', 'Limits', [0 100], 'Value', 0, ...
                 'MajorTicks', [0 100], 'MajorTickLabels', {'0%', '100%'}, 'MinorTicks', []);
@@ -731,7 +734,7 @@ classdef WorkspaceApp < matlab.apps.AppBase
                 'ItemsData', {'HbO', 'HbR'}, 'Value', 'HbO', 'ValueChangedFcn', applyRoi);
             addSpacer(grid);
 
-            names =["upperThreshold", "lowerThreshold", "exclusionDistance"];
+            names = ["upperThreshold", "lowerThreshold", "exclusionDistance"];
             labels = {'ROI: fraction of peak', 'Non-ROI: below fraction of peak', ...
                 'Non-ROI exclusion distance (mesh units)'};
             for index = 1:numel(names)
@@ -815,7 +818,7 @@ classdef WorkspaceApp < matlab.apps.AppBase
             history = titledPane(grid, 'Activity log');
             app.logText = uitextarea(history, 'Editable', 'off', 'FontName', 'Consolas', 'Value', {'Ready'});
 
-            details =titledPane(grid, 'Last error - technical details');
+            details = titledPane(grid, 'Last error - technical details');
             app.errorDetails = uitextarea(details, 'Editable', 'off', 'FontName', 'Consolas', 'Value', {'No error.'});
         end
     end
@@ -836,6 +839,7 @@ function isVector = isVectorSetting(name)
 end
 
 function ax = axesInGrid(grid, row, column)
+    %AXESINGRID New axes placed in one cell of a grid layout.
     ax = uiaxes(grid);
     ax.Layout.Row = row;
     ax.Layout.Column = column;
@@ -856,9 +860,11 @@ function addSection(grid, text)
 end
 
 function addLabel(grid, text)
+    %ADDLABEL A plain label filling the next Settings cell.
     uilabel(grid, 'Text', text);
 end
 
 function addSpacer(grid)
+    %ADDSPACER An empty label that skips the next Settings cell.
     uilabel(grid, 'Text', '');
 end

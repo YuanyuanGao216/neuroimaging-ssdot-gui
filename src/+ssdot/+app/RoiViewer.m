@@ -125,8 +125,9 @@ classdef RoiViewer < handle
         end
 
         function refresh(obj)
+            %REFRESH Update the controls, then plot the selected ROIs with their summary and notes.
             roiStatus = obj.controller.workspace.roiStatus(obj.state);
-            obj.updateControls(roiStatus);
+            obj.updateControls();
             notes = obj.statusNotes(roiStatus);
 
             first = obj.firstSelection.Value;
@@ -139,6 +140,7 @@ classdef RoiViewer < handle
         end
 
         function notes = statusNotes(obj, roiStatus)
+            %STATUSNOTES Caveats about the automatic ROIs: missing, stale or from an out-of-date result.
             notes = strings(1, 0);
             switch roiStatus
                 case "stale"
@@ -343,7 +345,8 @@ classdef RoiViewer < handle
             end
         end
 
-        function updateControls(obj, roiStatus)
+        function updateControls(obj)
+            %UPDATECONTROLS Enable the controls that apply to the current selection; sync the name and mode.
             busy = obj.controller.busy;
             first = obj.firstSelection.Value;
             second = obj.secondSelection.Value;
@@ -420,6 +423,7 @@ classdef RoiViewer < handle
 end
 
 function text = vertexCountText(roi)
+    %VERTEXCOUNTTEXT Size suffix for an ROI's entry in the selection lists.
     count = numel(roi.indices);
     if count == 0
         text = " (empty)";

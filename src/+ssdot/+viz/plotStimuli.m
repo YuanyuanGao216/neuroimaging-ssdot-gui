@@ -7,7 +7,7 @@ function handles = plotStimuli(ax, stimuli, runIndex, raw)
     for index = 1:numel(stimuli)
         events = stimuli(index).events;
         if isempty(events)
-            continue
+            continue;
         end
         if raw
             color = colors(mod(index - 1, size(colors, 1)) + 1, :);

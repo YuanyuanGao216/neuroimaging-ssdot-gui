@@ -170,7 +170,7 @@ classdef AnalysisPipeline < handle
                 summary = "A complete GPU-assisted reconstruction passed. See Log for recording details.";
             end
 
-            text =string(sprintf(['Hardware: %s\nParallel Computing Toolbox installed: %d\nLicense recognized: %d\n' ...
+            text = string(sprintf(['Hardware: %s\nParallel Computing Toolbox installed: %d\nLicense recognized: %d\n' ...
                 'MATLAB device available: %d\nGPU memory budget available: %s\nAllocation/arithmetic test passed: %d\n' ...
                 'Full GPU reconstruction validated: %d\n\n%s\n\nCompressed backend: exact temporal QR, bounded ' ...
                 'Gaussian/optical factors, and a direct dual inverse on the requested device.'], ...
@@ -181,7 +181,7 @@ classdef AnalysisPipeline < handle
 
     methods (Access = private)
         function runStages(obj, state)
-            % One function per entry of stageNames, in the same order.
+            %RUNSTAGES Run every stage in order; one function per entry of stageNames.
             stages = {@obj.preflight, @obj.loadPreparedInputs, @obj.prepareTemporal, @obj.checkResources, ...
                 @obj.prepareSpatial, @obj.prepareObservations, @obj.reconstruct, ...
                 @(state) obj.workspace.computeRois(state)};
@@ -251,6 +251,7 @@ classdef AnalysisPipeline < handle
         end
 
         function centers = kernelCenters(obj, state)
+            %KERNELCENTERS Brain and scalp kernel centres, shared between recordings with the same preparation.
             config = state.config;
             key = "centers:" + ssdot.io.valueHash({state.preparationKey, config.brainSamplingThreshold, ...
                 config.scalpSamplingThreshold});
@@ -331,6 +332,7 @@ classdef AnalysisPipeline < handle
 end
 
 function recordFailure(state, exception)
+    %RECORDFAILURE Mark the recording Failed, or Incompatible, and drop its result.
     % Errors that mean the recording does not fit the model or the method, rather than a failed computation.
     incompatible = ["SSDOT:Probe", "SSDOT:ModelMesh", "SSDOT:RecordingSize", "SSDOT:NoStimuli", "SSDOT:Measurement", ...
         "SSDOT:MissingProcessedData", "SSDOT:Wavelength", "SSDOT:DuplicateMeasurements", "SSDOT:SensitivityChannels", ...
@@ -347,6 +349,7 @@ function recordFailure(state, exception)
 end
 
 function checkNoiseVariances(config, sensitivity)
+    %CHECKNOISEVARIANCES Noise-weighted mode needs explicit variances or estimateMeasureNoise on the path.
     if isfield(config, 'noiseVariance')
         validateattributes(config.noiseVariance, {'numeric'}, {'vector', 'numel', 2 * numel(sensitivity.channels), ...
             'positive', 'finite'});
@@ -357,6 +360,7 @@ function checkNoiseVariances(config, sensitivity)
 end
 
 function text = describeResources(resources)
+    %DESCRIBERESOURCES One log line with the estimated memory and disk needs, in GiB.
     gib = 2^30;
     text = string(sprintf(['Resources (%s): %d brain / %d scalp kernels; ' ...
         'design %.2f GiB instead of %.2f GiB expanded; additional host peak %.2f GiB, GPU %.2f GiB; ' ...
@@ -367,6 +371,7 @@ function text = describeResources(resources)
 end
 
 function assertResourcesFit(resources, device)
+    %ASSERTRESOURCESFIT Refuse to run when host memory, disk space or (on GPU) GPU memory is insufficient.
     gib = 2^30;
     assert(resources.hostFits, 'SSDOT:HostMemory', ['The %s backend estimates %.2f GiB additional host memory, ' ...
         'above the safety budget (%.2f GiB currently available). Close other applications and run again; ' ...
@@ -383,6 +388,7 @@ function assertResourcesFit(resources, device)
 end
 
 function provenance = resultProvenance(state, result, fallbackNotice, elapsedSeconds)
+    %RESULTPROVENANCE Settings, inputs and solver diagnostics stored with a recording's result.
     temporal = state.temporalBasis;
     provenance = struct('config', state.config, 'recording', state.nodeName, ...
         'conditionNames', {temporal.conditionNames}, ...

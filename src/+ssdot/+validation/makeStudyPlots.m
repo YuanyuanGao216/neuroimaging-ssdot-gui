@@ -35,6 +35,7 @@ function images = makeStudyPlots(study)
 end
 
 function imagePath = savePlot(figureHandle, folder, name)
+    % Export the current figure as a PNG and return its report-relative path.
     ssdot.viz.styleExport(figureHandle);
     exportgraphics(figureHandle, fullfile(folder, name), 'Resolution', 180, 'BackgroundColor', 'white');
     imagePath = "plots/" + name;
@@ -44,12 +45,12 @@ function plotMapDistributions(layout, records)
     % Sorted modeled-cortex values of every run and condition, per chromophore.
     for k = 1:numel(records)
         stored = load(fullfile(records{k}.folder, 'numerical-results.mat'), 'hbo', 'hbr', 'mask');
-        for hb = 1:2
-            ax = nexttile(layout, hb);
+        for chromophoreIndex = 1:2
+            ax = nexttile(layout, chromophoreIndex);
             hold(ax, 'on');
             values = stored.hbo;
             label = 'HbO';
-            if hb == 2
+            if chromophoreIndex == 2
                 values = stored.hbr;
                 label = 'HbR';
             end
@@ -67,6 +68,7 @@ function plotMapDistributions(layout, records)
 end
 
 function plotObservedVersusPredicted(ax, record)
+    % Every tenth sample of the first measurement against the identity line.
     stored = load(fullfile(record.folder, 'numerical-results.mat'), 'optical');
     optical = stored.optical;
     sample = 1:10:numel(optical.time);
@@ -81,6 +83,7 @@ function plotObservedVersusPredicted(ax, record)
 end
 
 function plotComponentNorms(ax, records)
+    % Norm of each fitted model component relative to the observed signal, per run.
     labels = {};
     values = [];
     for k = 1:numel(records)
@@ -96,6 +99,7 @@ function plotComponentNorms(ax, records)
 end
 
 function plotGroundTruthMetrics(figureHandle, results, options)
+    % Synthetic-case metrics against their predeclared tolerances.
     clf(figureHandle);
     layout = tiledlayout(figureHandle, 2, 2, 'TileSpacing', 'compact');
     positive = ~[results.negativeControl];
@@ -164,16 +168,18 @@ function plotTruthVersusReconstruction(figureHandle, results, root)
 end
 
 function plotMethodComparison(figureHandle, comparison)
+    % Motor-parcel means of SS-DOT and the NeuroDOT comparator, per chromophore and side.
     clf(figureHandle);
     layout = tiledlayout(figureHandle, 2, 2, 'TileSpacing', 'compact');
-    for hb = ["HbO", "HbR"]
+    for chromophore = ["HbO", "HbR"]
         for side = ["Left", "Right"]
-            selected = comparison(string({comparison.chromophore}) == hb & string({comparison.hemisphere}) == side);
+            selected = comparison(string({comparison.chromophore}) == chromophore & ...
+                string({comparison.hemisphere}) == side);
             ax = nexttile(layout);
             bar(ax, [[selected.ssdotMeanM]' [selected.neurodotMeanM]'] * 1e6);
             xlabel(ax, 'Condition index (1 control; 2/3 finger L/R; 4/5 ball L/R)');
             ylabel(ax, '4-12-s mean (uM)');
-            title(ax, hb + " - independent " + side + " motor parcels");
+            title(ax, chromophore + " - independent " + side + " motor parcels");
             legend(ax, {'SS-DOT', 'NeuroDOT sequential comparator'});
             grid(ax, 'on');
         end

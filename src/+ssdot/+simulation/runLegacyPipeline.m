@@ -19,8 +19,8 @@ function calculatedMat = runLegacyPipeline(snirfFile, matFile, cfg, calculatedMa
     factors = ssdot.recon.factorDesign(calculatedMat.model, 'cpu');
     prediction = ssdot.recon.applyFactorizedDesign(factors, calculatedMat.observations, calculatedMat.b(:), false);
     residual = prediction - calculatedMat.Y;
-    calculatedMat.brainCoefficientEnergy = brainCoefficients * brainCoefficients';
-    calculatedMat.residualEnergy = residual' * residual;
+    calculatedMat.brainCoefficientEnergy = brainCoefficients*brainCoefficients';
+    calculatedMat.residualEnergy = residual'*residual;
 end
 
 function calculatedMat = buildDesign(snirfFile, matFile, cfg)
@@ -70,12 +70,12 @@ function calculatedMat = buildDesign(snirfFile, matFile, cfg)
     OD = procData.dod.dataTimeSeries;
     [timePoints, nChannels] = size(OD);
     odW1 = OD(:, channels)';
-    odW2 = OD(:, channels + size(OD, 2) / 2)';
+    odW2 = OD(:, channels + size(OD, 2)/2)';
     Y = [reshape(odW1, [], 1); reshape(odW2, [], 1)];
     calculatedMat.Y = Y;
     calculatedMat.OD_w1 = odW1;
     calculatedMat.OD_w2 = odW2;
-    activeChannelNumber = length(channels) * 2;
+    activeChannelNumber = length(channels)*2;
 
     %% Short-separation regressors
     if cfg.SS_flag == 1
@@ -118,7 +118,7 @@ function calculatedMat = buildDesign(snirfFile, matFile, cfg)
         'shortRegressors', sparse(odSS), 'driftRegressors', sparse(odDrift), ...
         'nuisanceTemporal', struct('short', {shortTemporal}, 'drift', driftTemporal));
     % Brain HbO and HbR coefficients come first in the solution.
-    calculatedMat.brainColumns = 2 * size(G.G_brain, 1) * size(T.T_HbO_brain, 2);
+    calculatedMat.brainColumns = 2*size(G.G_brain, 1)*size(T.T_HbO_brain, 2);
     calculatedMat.n_channels = nChannels;
     calculatedMat.n_drifter = nDrifter;
 end
@@ -147,36 +147,39 @@ function [odSSW1Avg, odSSW2Avg] = averageShortSeparationOd(cfg, procData, OD, nC
     channelsShort = intersect(activeChLst, shortSepChLst);
 
     odSSW1Avg = mean(OD(:, channelsShort), 2);
-    odSSW2Avg = mean(OD(:, nChannels / 2 + channelsShort), 2);
+    odSSW2Avg = mean(OD(:, nChannels/2 + channelsShort), 2);
 end
 
 function odSS = shortSeparationDesign(odSSW1Avg, odSSW2Avg, timePoints, activeChannelNumber)
     % One SS regressor column per channel, interleaved to match Y's ordering.
-    nPerWavelength = activeChannelNumber / 2;
-    odSS = zeros(timePoints * activeChannelNumber, activeChannelNumber);
+    nPerWavelength = activeChannelNumber/2;
+    nRows = timePoints*activeChannelNumber;
+    rowsPerWavelength = timePoints*activeChannelNumber/2;
+    odSS = zeros(nRows, activeChannelNumber);
     for i = 1:nPerWavelength
-        odSS(i:nPerWavelength:timePoints * activeChannelNumber / 2, i) = odSSW1Avg;
+        odSS(i:nPerWavelength:rowsPerWavelength, i) = odSSW1Avg;
     end
     for i = 1:nPerWavelength
-        odSS(timePoints * activeChannelNumber / 2 + i:nPerWavelength:timePoints * activeChannelNumber, ...
-            nPerWavelength + i) = odSSW2Avg;
+        odSS(rowsPerWavelength + i:nPerWavelength:nRows, nPerWavelength + i) = odSSW2Avg;
     end
 end
 
 function [odDrift, nDrifter] = driftDesign(D, activeChannelNumber)
     % One copy of every drift column per channel, interleaved to match Y's ordering.
     [timePoints, nDrifter] = size(D);
-    nPerWavelength = activeChannelNumber / 2;
-    odDrift = zeros(activeChannelNumber * timePoints, activeChannelNumber * nDrifter);
+    nPerWavelength = activeChannelNumber/2;
+    nRows = timePoints*activeChannelNumber;
+    rowsPerWavelength = timePoints*activeChannelNumber/2;
+    columnsPerWavelength = activeChannelNumber*nDrifter/2;
+    odDrift = zeros(activeChannelNumber*timePoints, activeChannelNumber*nDrifter);
     for i = 1:nPerWavelength
         for j = 1:nDrifter
-            odDrift(i:nPerWavelength:timePoints * activeChannelNumber / 2, (i - 1) * nDrifter + j) = D(:, j);
+            odDrift(i:nPerWavelength:rowsPerWavelength, (i - 1)*nDrifter + j) = D(:, j);
         end
     end
     for i = 1:nPerWavelength
         for j = 1:nDrifter
-            odDrift(timePoints * activeChannelNumber / 2 + i:nPerWavelength:timePoints * activeChannelNumber, ...
-                activeChannelNumber * nDrifter / 2 + (i - 1) * nDrifter + j) = D(:, j);
+            odDrift(rowsPerWavelength + i:nPerWavelength:nRows, columnsPerWavelength + (i - 1)*nDrifter + j) = D(:, j);
         end
     end
 end

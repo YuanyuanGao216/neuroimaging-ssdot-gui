@@ -1,15 +1,19 @@
 % Compare current and professor-compatible temporal construction with all
 % spatial, optical, inverse, and regularization inputs held fixed.
+
+%% Locate and verify the pinned professor checkout
 root = fileparts(fileparts(mfilename('fullpath')));
 reference = getenv('SSDOT_PROFESSOR_ROOT');
 if isempty(reference)
     reference = fullfile(fileparts(root), 'SSDOT');
 end
 commit = '31bb4206dc55bbe9b67030864629b76554b62aec';
+
 [ok, head] = system(sprintf('git -C "%s" rev-parse HEAD', reference));
 assert(ok == 0 && strcmp(strtrim(head), commit), 'Unexpected original source pin.');
 [ok, status] = system(sprintf('git -C "%s" status --porcelain', reference));
 assert(ok == 0 && isempty(strtrim(status)), 'Professor checkout must remain clean.');
+
 addpath(fullfile(root, 'src'));
 ssdot.app.initializeEnvironment(root);
 addpath(fullfile(root, 'research', 'compat'), '-begin');
@@ -19,6 +23,8 @@ out = fullfile(root, 'results', 'validation', 'temporal-workflow-20261108');
 if ~isfolder(out)
     mkdir(out);
 end
+
+%% Compare both workflows on every ST001 recording
 options = ssdot.validation.defaultOptions();
 data = ssdot.validation.loadSt001(options.datasetRoot, @(~, ~, ~) []);
 vertices = data.atlas.fwmodel.mesh.vertices;
@@ -125,7 +131,7 @@ for k = 1:numel(data.records)
     for e = 1:numel(trace.eventStats)
         row = trace.eventStats{e};
         row.recording = string(entry.name);
-        eventRows{end+1} = row; %#ok<AGROW>
+        eventRows{end+1} = row; %#ok<SAGROW>
     end
     if k == 1
         syntheticRows = runSyntheticControl(currentPrepared, data.atlas, originalT, currentT, cfg, out);
@@ -141,6 +147,7 @@ for k = 1:numel(data.records)
     clear currentPrepared currentModel originalModel currentResult originalResult currentObs originalObs
 end
 
+%% Final tables
 writetable(struct2table([recordRows{:}]), fullfile(out, 'recording-effects.csv'));
 writetable(struct2table([syntheticRows{:}]), fullfile(out, 'synthetic-effects.csv'));
 writetable(struct2table([eventRows{:}]), fullfile(out, 'event-duration-audit.csv'));
@@ -151,6 +158,7 @@ writetable(stageTable(:, {'recording', 'condition', 'chromophore', 'rawGammaRela
 fprintf('Temporal workflow comparison complete: %s\n', out);
 
 function [T, trace] = originalTemporal(recording, recordName, datasetRoot, cfg, reference)
+    % Pinned Homer temporal basis for one recording, with a stage-by-stage trace for comparison.
     files = dir(fullfile(datasetRoot, '**', '*.snirf'));
     [~, base, ext] = fileparts(char(recordName));
     recordFile = [base ext];
@@ -235,7 +243,8 @@ function [T, trace] = originalTemporal(recording, recordName, datasetRoot, cfg, 
 end
 
 function stim = buildStimuli(stimuli)
-    stim = StimClass().empty;
+    % Homer StimClass objects holding the recording's events and their enabled states.
+    stim =StimClass().empty;
     for c = 1:numel(stimuli)
         stim(c) = StimClass();
         stim(c).SetName(char(stimuli(c).name));
@@ -336,6 +345,7 @@ function rawGamma = homerGamma(tHRF, parameters, dt)
 end
 
 function T = selectConditions(T, names)
+    % Keep only the named conditions' design columns, in the given order.
     allNames = string(T.conditionNames);
     idx = zeros(1, numel(names));
     for k = 1:numel(names)
@@ -425,6 +435,7 @@ function od = synthesize(prepared, T, truth)
 end
 
 function value = fit(model, obs, result, cfg)
+    % Goodness of the model's optical prediction: R^2, RMSE and residual norm.
     factors = ssdot.recon.factorDesign(model, cfg.device);
     prediction = ssdot.recon.applyFactorizedDesign(factors, obs, result.coefficients(:), false);
     residual = prediction - obs.response;
@@ -433,11 +444,13 @@ function value = fit(model, obs, result, cfg)
 end
 
 function value = relativeDifference(reference, other)
+    % Norm of the difference relative to the reference norm.
     value = norm(reference - other)/max(norm(reference), realmin);
 end
 
 function c = corrOf(a, b)
-    a = double(a(:));
+    % Pearson correlation, NaN when either input is constant.
+    a =double(a(:));
     b = double(b(:));
     if std(a) == 0 || std(b) == 0
         c = NaN;
@@ -448,6 +461,7 @@ function c = corrOf(a, b)
 end
 
 function s = startSample(time, t)
+    % Index of the sample nearest to the given time.
     [~, s] = min(abs(t - time));
 end
 

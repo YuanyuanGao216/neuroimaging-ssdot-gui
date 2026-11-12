@@ -2,16 +2,16 @@ function benchmark = benchmarkStudy(options, manifest, progress)
     %BENCHMARKSTUDY One verified independent geometry, two distinct methods.
     loaded = load(manifest.derivedMat, 'bundle');
     bundle = loaded.bundle;
-    cfg = ssdot.app.defaultConfig();
+    config = ssdot.app.defaultConfig();
     folder = fullfile(options.outputFolder, 'benchmark');
     if ~isfolder(folder)
         mkdir(folder);
     end
 
     rawModel = struct('brain', bundle.brain, 'scalp', bundle.scalp, 'probe', bundle.probe, 'cached', []);
-    prepared = ssdot.validation.prepareModel(bundle.recording, rawModel, bundle.atlas, cfg, progress);
+    prepared = ssdot.validation.prepareModel(bundle.recording, rawModel, bundle.atlas, config, progress);
     progress("Independent full-resolution SS-DOT reconstruction", 0, 1);
-    result = ssdot.recon.reconstructImage(prepared.model, prepared.observations, cfg, progress);
+    result = ssdot.recon.reconstructImage(prepared.model, prepared.observations, config, progress);
 
     % Hemispheres come from the independent parcel labels, not from coordinates.
     hemisphere = repmat("Midline", size(bundle.coordinates, 1), 1);
@@ -24,6 +24,8 @@ function benchmark = benchmarkStudy(options, manifest, progress)
 
     sensitivity = prepared.sensitivity;
     temporal = prepared.model.temporalBasis;
+
+    % The pinned NeuroDOT routines are on the path only for this comparison.
     referenceFolder = fullfile(options.externalDataRoot, 'neurodot');
     previousPath = path;
     cleanup = onCleanup(@() path(previousPath));
@@ -59,7 +61,7 @@ function benchmark = benchmarkStudy(options, manifest, progress)
     save(fullfile(folder, 'method-arrays.mat'), 'effectsSs', 'effectsNd', 'ssdotHbo', 'ssdotHbr', ...
         'neurodotHbo', 'neurodotHbr', 'conditionNames', 'hrfTime', 'mask', 'coordinates', 'eventCounts', '-v7');
 
-    benchmark =struct('summary', summary, 'provenance', manifest, 'comparison', table2struct(comparison), ...
+    benchmark = struct('summary', summary, 'provenance', manifest, 'comparison', table2struct(comparison), ...
         'reference', "Native NeuroDOT inverse/spectroscopy on common preprocessed data and masks; " + ...
         "sequential SS+drift; not the full Cedalion tutorial", ...
         'physiologicalValidity', "Uncertain: no cortical ground truth or independently measured physiological " + ...
@@ -94,10 +96,11 @@ function [ssdotHbo, ssdotHbr, neurodotHbo, neurodotHbr, eventCounts] = eventResp
     nCond = numel(temporal.conditionNames);
 
     nDesign = size(temporal.T_HbO_brain, 2);
-    count = size(spatialBasis.G_brain, 1) * nDesign;
+    nBrainCoefficients = size(spatialBasis.G_brain, 1) * nDesign;
     beta = result.coefficients(:);
-    amplitudeO = double(spatialBasis.G_brain)' * reshape(beta(1:count), nDesign, [])';
-    amplitudeR = double(spatialBasis.G_brain)' * reshape(beta(count + (1:count)), nDesign, [])';
+    amplitudeO = double(spatialBasis.G_brain)' * reshape(beta(1:nBrainCoefficients), nDesign, [])';
+    amplitudeR = double(spatialBasis.G_brain)' * ...
+        reshape(beta(nBrainCoefficients + (1:nBrainCoefficients)), nDesign, [])';
 
     ssdotHbo = zeros(nBrain, nTime, nCond);
     ssdotHbr = ssdotHbo;

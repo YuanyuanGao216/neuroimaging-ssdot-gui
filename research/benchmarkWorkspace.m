@@ -20,20 +20,20 @@ function report = benchmarkWorkspace(datasetRoot)
     paths.temporary = temporaryPaths.temporary;
     app.controller.environment.paths = paths;
 
-    clock = tic;
+    stopwatch = tic;
     app.openDataset(datasetRoot);
-    openSeconds = toc(clock);
+    openSeconds = toc(stopwatch);
     assert(app.controller.workspace.cacheStatistics.solves == 0, 'SSDOT:Benchmark', ...
         'Opening a dataset must not compute.');
 
     % While the analysis runs, a timer polls for the first result drawn on screen.
     firstSeconds = NaN;
-    clock = tic;
+    stopwatch = tic;
     observer = timer('ExecutionMode', 'fixedSpacing', 'Period', 0.05, 'BusyMode', 'drop', 'TimerFcn', @sample);
     timerCleanup = onCleanup(@() deleteObserver(observer));
     start(observer);
     app.controller.analysis.run();
-    runSeconds = toc(clock);
+    runSeconds = toc(stopwatch);
     stop(observer);
 
     process = System.Diagnostics.Process.GetCurrentProcess();
@@ -78,17 +78,19 @@ function report = benchmarkWorkspace(datasetRoot)
     disp(report);
 
     function sample(~, ~)
+        % Timer callback: record when the first recording's result is first drawn.
         if ~isnan(firstSeconds) || isempty(app.controller.workspace.runs)
             return;
         end
         first = app.controller.workspace.stateFor(app.controller.workspace.runs(1));
         if ~isempty(first.result) && ~isempty(findall(app.resultAxes(1), 'Type', 'patch'))
-            firstSeconds = toc(clock);
+            firstSeconds = toc(stopwatch);
         end
     end
 end
 
 function deleteObserver(observer)
+    % Stop and delete the polling timer if it still exists.
     if isvalid(observer)
         stop(observer);
         delete(observer);
@@ -96,6 +98,7 @@ function deleteObserver(observer)
 end
 
 function removeOwnedFolder(folder)
+    % Delete the benchmark's temporary folder, refusing any path it does not own.
     target = string(java.io.File(char(folder)).getCanonicalPath());
     temporaryRoot = string(java.io.File(tempdir).getCanonicalPath());
     [~, name] = fileparts(target);

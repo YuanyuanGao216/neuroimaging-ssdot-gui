@@ -50,11 +50,12 @@ function testWorkspaceEndToEndWithoutReconstruction(t)
     mesh = struct('vertices', [120 125 125; 136 125 125; 128 140 125; 128 132 140; 128 130 120], ...
         'faces', [1 2 3; 1 2 4; 1 3 4; 2 3 4; 1 2 5]);
     atlas = struct('fwmodel', struct('mesh', mesh), 'pialsurf', struct('mesh', mesh, 'mesh_reduced', mesh));
-    n = size(mesh.vertices, 1);
-    mask = (1:n)';
+    nVertices = size(mesh.vertices, 1);
+    mask = (1:nVertices)';
     member = @(name, hbo, names) sourceState(controller, atlas, mask, name, hbo, names);
-    run1 = member("run 1", [ones(n, 1) 7 * ones(n, 1)] * 1e-9, {'A', 'B'});                      % A=1, B=7
-    run2 = member("run 2", [3 * ones(n, 1) 11 * ones(n, 1) ones(n, 1)] * 1e-9, {'B', 'A', '0'}); % B=3, A=11
+    run1 = member("run 1", [ones(nVertices, 1) 7 * ones(nVertices, 1)] * 1e-9, {'A', 'B'}); % A=1, B=7
+    run2 = member("run 2", [3 * ones(nVertices, 1) 11 * ones(nVertices, 1) ones(nVertices, 1)] * 1e-9, ...
+        {'B', 'A', '0'}); % B=3, A=11
 
     average = ssdot.app.ReconstructionState();
     average.nodeName = "session";
@@ -73,8 +74,8 @@ function testWorkspaceEndToEndWithoutReconstruction(t)
 
     app.mapDropDown.Value = 'T value';
     app.renderActiveTab();
-    patch = findall(app.resultAxes(1), 'Type', 'patch');
-    verifyEqual(t, patch.FaceVertexCData, stats.hbo.t(:, 1), 'RelTol', 1e-12);
+    mapPatch = findall(app.resultAxes(1), 'Type', 'patch');
+    verifyEqual(t, mapPatch.FaceVertexCData, stats.hbo.t(:, 1), 'RelTol', 1e-12);
     label = string(app.resultLabel.Text);
     verifyTrue(t, contains(label, 'df = 1') && contains(label, 'left out'));
 
@@ -82,8 +83,8 @@ function testWorkspaceEndToEndWithoutReconstruction(t)
     app.significanceField.Value = 0.5;
     app.correctionDropDown.Value = 'bonferroni';
     app.renderActiveTab();
-    patch = findall(app.resultAxes(1), 'Type', 'patch');
-    verifyEqual(t, patch.FaceVertexCData, min(1, stats.hbo.p(:, 1) * n), 'RelTol', 1e-12);
+    mapPatch = findall(app.resultAxes(1), 'Type', 'patch');
+    verifyEqual(t, mapPatch.FaceVertexCData, min(1, stats.hbo.p(:, 1) * nVertices), 'RelTol', 1e-12);
     verifyEqual(t, string([app.significanceField.Enable app.correctionDropDown.Enable app.scaleDropDown.Enable]), ...
         ["on" "on" "off"]);
 
@@ -92,7 +93,7 @@ function testWorkspaceEndToEndWithoutReconstruction(t)
         'Single recordings have no T/P maps.');
 
     % ROI rule on the HbR decrease; changing the rule marks automatic ROIs out of date.
-    hbr = zeros(n, 1);
+    hbr = zeros(nVertices, 1);
     hbr(5) = -2e-9;
     run1.result.hbr(:, 1) = hbr;
 
@@ -143,6 +144,7 @@ function testSettingsInvalidateOnlyDependentStages(t)
 end
 
 function state = sourceState(controller, atlas, mask, name, hbo, names)
+    % A finished single-recording result with the given HbO maps and condition names.
     state = ssdot.app.ReconstructionState();
     state.nodeName = name;
     state.atlas = atlas;

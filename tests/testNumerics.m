@@ -23,6 +23,7 @@ function testConcentrationMultipleBasisAndConditions(t)
     coefficients = 1:24;
 
     C = ssdot.recon.reconstructConcentrations(G, T, coefficients, 1, true, 'cpu');
+
     verifyEqual(t, numel(C.intensity_HbO), 2);
     verifyEqual(t, C.intensity_HbO{1}, [1 2; 5 6] * T.t_HbO_brain');
     verifyEqual(t, C.intensity_HbO{2}, [3 4; 7 8] * T.t_HbO_brain');
@@ -33,7 +34,9 @@ end
 
 function testNoiseWeightOrdering(t)
     config = struct('regularization', 2, 'noise_variance', [1 2 4 8]);
+
     R = ssdot.recon.measurementPrecision(zeros(2, 3), zeros(2, 3), config);
+
     verifyEqual(t, full(diag(R)), [1; .5; 1; .5; 1; .5; .25; .125; .25; .125; .25; .125]);
 end
 
@@ -54,12 +57,8 @@ function testMaskAndProjectionAdapters(t)
     T = ssdot.recon.buildTemporalMatrix(ones(4, 1, 2), cat(3, [0; 1; 1], [0; 2; 2]));
     C = struct('intensity_HbO', {{[2 3 4; 5 6 7]}}, 'intensity_HbR', {{[8 9 10; 11 12 13]}});
     data = struct('T', T, 'M', struct('mask_brain', [1 3]), 'Conc', C);
+
     [hbo, hbr] = ssdot.recon.projectToVertices(data, 4);
     verifyEqual(t, hbo, [3; 0; 6; 0]);
     verifyEqual(t, hbr, [9; 0; 12; 0]);
-end
-
-function A = optics(nChannels, nVertices)
-    A = struct('w1_HbO', rand(nChannels, nVertices), 'w1_HbR', rand(nChannels, nVertices), ...
-        'w2_HbO', rand(nChannels, nVertices), 'w2_HbR', rand(nChannels, nVertices));
 end

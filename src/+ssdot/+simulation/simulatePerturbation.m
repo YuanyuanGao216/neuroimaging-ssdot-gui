@@ -57,8 +57,8 @@ function simulatePerturbation(cfg)
             end
 
             % The fake SS channel is the scaled mean of the short-separation OD.
-            odSSAvgW1 = mean(odRearrange(:, shortPairs), 2) * 2 / 19;
-            odSSAvgW2 = mean(odRearrange(:, 50 + shortPairs), 2) * 2 / 19;
+            odSSAvgW1 = mean(odRearrange(:, shortPairs), 2)*2/19;
+            odSSAvgW2 = mean(odRearrange(:, 50 + shortPairs), 2)*2/19;
             mlActAuto{1, 1} = ones(100, 1);
 
             for tt = 1:length(T)
@@ -164,7 +164,7 @@ function stimMat = stimulusMatrix(t, stimulusTimeSeries)
     stimTime = t(stimulusTimeSeries == 1);
     stimMat = zeros(length(stimTime), 3);
     stimMat(:, 1) = stimTime;
-    stimMat(:, 2) = 10 * ones(length(stimTime), 1);
+    stimMat(:, 2) = 10*ones(length(stimTime), 1);
     stimMat(:, 3) = ones(length(stimTime), 1);
 end
 
@@ -172,28 +172,28 @@ function tbasis = buildHrfBasis(dt)
     % One gamma basis per chromophore (HbO, HbR), convolved with a boxcar.
     nBasis = 1;
     trange = [-2, 18];
-    nPre = round(trange(1) / dt);
-    nPost = round(trange(2) / dt);
-    tHRF = (nPre * dt:dt:nPost * dt)';
+    nPre = round(trange(1)/dt);
+    nPost = round(trange(2)/dt);
+    tHRF = (nPre*dt:dt:nPost*dt)';
     ntHRF = length(tHRF);
     nConc = 2;
     tbasis = zeros(ntHRF, nBasis, nConc);
     paramsBasis = [0.1 3 7 0.1 3 7];
     for iConc = 1:nConc
-        tau = paramsBasis((iConc - 1) * 3 + 1);
-        sigma = paramsBasis((iConc - 1) * 3 + 2);
-        boxcarSeconds = paramsBasis((iConc - 1) * 3 + 3);
+        tau = paramsBasis((iConc - 1)*3 + 1);
+        sigma = paramsBasis((iConc - 1)*3 + 2);
+        boxcarSeconds = paramsBasis((iConc - 1)*3 + 3);
 
-        tbasis(:, 1, iConc) = (exp(1) * (tHRF - tau).^2 / sigma^2) .* exp(-(tHRF - tau).^2 / sigma^2);
+        tbasis(:, 1, iConc) = (exp(1)*(tHRF - tau).^2/sigma^2).*exp(-(tHRF - tau).^2/sigma^2);
         tbasis(tHRF < 0, 1, iConc) = 0;
         if tHRF(1) < tau
-            tbasis(1:round((tau - tHRF(1)) / dt), 1, iConc) = 0;
+            tbasis(1:round((tau - tHRF(1))/dt), 1, iConc) = 0;
         end
 
         if boxcarSeconds > 0
             for iBasis = 1:nBasis
-                boxcarLength = round(boxcarSeconds / dt);
-                smoothed = conv(tbasis(:, iBasis, iConc), ones(boxcarLength, 1)) / boxcarLength;
+                boxcarLength = round(boxcarSeconds/dt);
+                smoothed = conv(tbasis(:, iBasis, iConc), ones(boxcarLength, 1))/boxcarLength;
                 tbasis(:, iBasis, iConc) = smoothed(1:ntHRF, 1);
             end
         end
@@ -215,24 +215,24 @@ function [Amatrix, stim] = buildStimulusDesign(nT, dt, tbasis, sequenceFile)
         restArray = restMat(index(i), :);
         % Onsets: first at 5 s, then every 5 s task plus the stored rest.
         onset = zeros(nT, nCond);
-        timePoint = 5 / dt;
+        timePoint = 5/dt;
         for j = 1:length(taskArray)
             if j == 1
                 onset(round(timePoint)) = 1;
             else
-                timePoint = timePoint + 5 / dt + restArray(j) / dt;
+                timePoint = timePoint + 5/dt + restArray(j)/dt;
                 onset(round(timePoint)) = 1;
             end
         end
 
-        dA = zeros(nT, nBasis * nCond, 2);
+        dA = zeros(nT, nBasis*nCond, 2);
         for iConc = 1:2
-            iC = 0;
+            designColumn = 0;
             for iCond = 1:nCond
                 for b = 1:nBasis
-                    iC = iC + 1;
-                    column = conv(onset(:, iCond), tbasis(:, b, iConc));
-                    dA(:, iC, iConc) = column(1:nT);
+                    designColumn = designColumn + 1;
+                    regressor = conv(onset(:, iCond), tbasis(:, b, iConc));
+                    dA(:, designColumn, iConc) = regressor(1:nT);
                     onset = onset(1:nT);
                 end
             end
@@ -248,8 +248,8 @@ function odHRF = generateHRF(brainVertices, scalpVertices, indexPerturbation, ac
     % The maximum of dA is 0.4, so the peak HbO change is 0.4 * scaleFactor.
     g = zeros(size(brainVertices, 1), 1);
     g(indexPerturbation) = 1;
-    bBrainHbO = kron(g, squeeze(dA(:, :, 1))' * scaleFactor);
-    bBrainHbR = kron(g, squeeze(dA(:, :, 2))' * (-0.5 * scaleFactor));
+    bBrainHbO = kron(g, squeeze(dA(:, :, 1))'*scaleFactor);
+    bBrainHbR = kron(g, squeeze(dA(:, :, 2))'*(-0.5*scaleFactor));
     bScalpHbO = zeros(size(scalpVertices, 1), size(dA, 1));
     bScalpHbR = zeros(size(scalpVertices, 1), size(dA, 1));
 
@@ -267,16 +267,16 @@ function odHRF = generateHRF(brainVertices, scalpVertices, indexPerturbation, ac
         amatrixBrain.w2_HbO, amatrixBrain.w2_HbR];
     AScalp = [amatrixScalp.w1_HbO, amatrixScalp.w1_HbR; ...
         amatrixScalp.w2_HbO, amatrixScalp.w2_HbR];
-    odHRF = [ABrain, AScalp] * [bBrainHbO; bBrainHbR; bScalpHbO; bScalpHbR];
+    odHRF = [ABrain, AScalp]*[bBrainHbO; bBrainHbR; bScalpHbO; bScalpHbR];
 end
 
 function visualizePerturbation(cfg, atlasViewer, brainVertices, indexPerturbation, scaleFactor)
-    h = plotPerturbationMap(atlasViewer, brainVertices, indexPerturbation, 0.4 * scaleFactor, scaleFactor, 'HbO');
+    h = plotPerturbationMap(atlasViewer, brainVertices, indexPerturbation, 0.4*scaleFactor, scaleFactor, 'HbO');
     hold on
     savefig([cfg.savepath_rs, filesep, 'pertubation_HbO.fig'])
     close(h)
 
-    h = plotPerturbationMap(atlasViewer, brainVertices, indexPerturbation, -0.4 * 0.5 * scaleFactor, ...
+    h = plotPerturbationMap(atlasViewer, brainVertices, indexPerturbation, -0.4*0.5*scaleFactor, ...
         scaleFactor, 'HbR');
     savefig([cfg.savepath_rs, filesep, 'pertubation_HbR.fig'])
     close(h)
@@ -294,7 +294,7 @@ function h = plotPerturbationMap(atlasViewer, brainVertices, indexPerturbation, 
     camtarget([128.0, 132.0, 130.0])
     campos([128.0, 2238.8, 130.0])
     camup([-1.0, 0.0, 0.0])
-    caxis([-1 1] * 0.5 * scaleFactor)
+    caxis([-1 1]*0.5*scaleFactor)
     title(chromophore)
     set(gcf, 'position', [10 10 399 235])
     axis image

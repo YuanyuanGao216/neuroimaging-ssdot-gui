@@ -27,6 +27,7 @@ classdef ResultsView < handle
         end
 
         function render(obj, state)
+            %RENDER Draw the chosen map of a result, or explain that there is none yet.
             app = obj.app;
             if isempty(state.result)
                 for ax = app.resultAxes
@@ -87,6 +88,7 @@ classdef ResultsView < handle
         end
 
         function [shown, note] = mapValues(obj, state, statistics, map, hb, condition)
+            %MAPVALUES Values, color limits and colormap of the chosen map, with a note describing it.
             app = obj.app;
             scale = string(app.scaleDropDown.Value);
             switch map
@@ -179,6 +181,7 @@ function statistics = resultStatistics(state)
 end
 
 function kind = averageKind(state)
+    %AVERAGEKIND What an average was taken over (recordings by default).
     kind = "recordings";
     if isfield(state.result, 'provenance') && isfield(state.result.provenance, 'sourceKind')
         kind = string(state.result.provenance.sourceKind);
@@ -186,6 +189,7 @@ function kind = averageKind(state)
 end
 
 function text = correctionText(method)
+    %CORRECTIONTEXT Description of a multiple-comparison adjustment for the label under the maps.
     switch string(method)
         case "fdr"
             text = "FDR-adjusted (Benjamini-Hochberg) across vertices";
@@ -197,7 +201,8 @@ function text = correctionText(method)
 end
 
 function [temporalMode, gamma] = temporalSummary(state)
-    % Averages and restored sessions keep temporal provenance in the result, not a basis object.
+    %TEMPORALSUMMARY Temporal convention and gamma parameters behind a result, as text.
+    %   Averages and restored sessions keep temporal provenance in the result, not a basis object.
     temporalMode = "";
     gamma = "";
 

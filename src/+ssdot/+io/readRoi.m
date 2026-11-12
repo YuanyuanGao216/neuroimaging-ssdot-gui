@@ -3,6 +3,7 @@ function roi = readRoi(filename, surface, associateLegacy)
     if nargin < 3
         associateLegacy = false;
     end
+
     loaded = load(filename);
     if isfield(loaded, 'roi')
         roi = ssdot.viz.validateRoi(loaded.roi, surface);

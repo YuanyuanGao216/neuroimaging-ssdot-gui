@@ -45,16 +45,16 @@ function testMeshIndexAndFrameValidation(t)
 end
 
 function testNeutralCoordinateDistance(t)
-    a = struct('coordinates', [0 0 0], 'coordinateSystem', "known frame", 'units', "mm");
-    b = a;
-    b.coordinates = [3 4 0];
+    origin = struct('coordinates', [0 0 0], 'coordinateSystem', "known frame", 'units', "mm");
+    point = origin;
+    point.coordinates = [3 4 0];
 
-    distance = ssdot.recon.coordinateDistance(a, b);
+    distance = ssdot.recon.coordinateDistance(origin, point);
     verifyEqual(t, distance.value, 5);
     verifyEqual(t, distance.label, "Coordinate distance");
 
-    b.coordinateSystem = "other frame";
-    verifyError(t, @() ssdot.recon.coordinateDistance(a, b), 'SSDOT:CoordinateMismatch');
+    point.coordinateSystem = "other frame";
+    verifyError(t, @() ssdot.recon.coordinateDistance(origin, point), 'SSDOT:CoordinateMismatch');
 end
 
 function testLegacyAssociationAndCanonicalRoundTrip(t)

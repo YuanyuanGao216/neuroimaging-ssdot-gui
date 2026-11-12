@@ -1,4 +1,7 @@
-%% sensitivty profile
+% Figures and statistics from the SS-DOT paper. Only the lateralization-index section
+% runs; the commented sections are historical and need data and helpers not included here.
+
+%% sensitivity profile
 atlasViewer = load(fullfile('data','atlasViewer.mat'));
 brainVertices = atlasViewer.fwmodel.mesh.vertices;
 scalpVertices = atlasViewer.fwmodel.mesh_scalp.vertices;
@@ -399,6 +402,7 @@ clear atlasViewer
 %     h.ax = axes('Position',[0.265 + 0.165*4 0.79-(k-1)*0.07 0.071 0.1]);
 %     plot_int_paper(h, faces, brain_vertices, HbR(:, hand), 'R')
 % end
+
 %% plot LI
 % Per-subject lateralization index of each method: HbO for both conditions, then HbR.
 resultSources = {
@@ -411,27 +415,28 @@ resultSources = {
 for chromophore = {'HbO', 'HbR'}
     for cond = 1:2
         LI = [];
-        g = {};
+        methodLabels = {};
         for source = 1:size(resultSources, 1)
             load(fullfile(resultSources{source, 1}, 'output.mat'));
-            li = output(cond).(['LI_subj_' chromophore{1}]);
-            LI = [LI; li]; %#ok<AGROW>
-            g = [g; repmat(resultSources(source, 2), length(li), 1)]; %#ok<AGROW>
+            subjectLi = output(cond).(['LI_subj_' chromophore{1}]);
+            LI = [LI; subjectLi]; %#ok<AGROW>
+            methodLabels = [methodLabels; repmat(resultSources(source, 2), length(subjectLi), 1)]; %#ok<AGROW>
         end
 
         figure
         hold on
-        boxplot(LI , g, 'colors', 'k', 'symbol', 'k');
+        boxplot(LI, methodLabels, 'colors', 'k', 'symbol', 'k');
         ylabel('LI')
         xtickangle(45)
         box off
-        set(gca,'fontname','Arial')
+        set(gca, 'fontname', 'Arial')
         set(gca, 'fontsize', 14)
-        set(gcf, 'position', [10 10 421   317])
+        set(gcf, 'position', [10 10 421 317])
 
-        [p,tbl,stats] = kruskalwallis(LI,g);
-        c = multcompare(stats, "ctype","bonferroni",'display', 'off');
-        tbl = array2table(c,'VariableNames', {'GroupA','GroupB','LowerLimit','AB','UpperLimit','Pvalue'})
+        % Kruskal-Wallis across methods, then Bonferroni-corrected pairwise comparisons.
+        [p, tbl, stats] = kruskalwallis(LI, methodLabels);
+        c = multcompare(stats, "ctype", "bonferroni", 'display', 'off');
+        tbl = array2table(c, 'VariableNames', {'GroupA', 'GroupB', 'LowerLimit', 'AB', 'UpperLimit', 'Pvalue'})
     end
 end
 
@@ -486,41 +491,40 @@ end
 
 
 function plotIntPaper(h, faces, brainVertices, intAtPos, rotation)
+    % Paper-style lateral view ('L' or 'R') of a normalized brain map on the current axes.
+    axesOrder = [2, 1, 3];
 
-    axesOrder = [2,1,3];
-
-    h.patch = trisurf(faces, brainVertices(:,axesOrder(1)), brainVertices(:,axesOrder(2)), brainVertices(:,axesOrder(3)), ...
-        intAtPos,'facecolor','interp','edgealpha',0, 'visible','on');
-    set(h.patch,'diffusestrength',.9,'specularstrength',.12,'ambientstrength',.2);
+    h.patch = trisurf(faces, brainVertices(:, axesOrder(1)), brainVertices(:, axesOrder(2)), ...
+        brainVertices(:, axesOrder(3)), intAtPos, 'facecolor', 'interp', 'edgealpha', 0, 'visible', 'on');
+    set(h.patch, 'diffusestrength', .9, 'specularstrength', .12, 'ambientstrength', .2);
     caxis([-1 1])
 
     if strcmp(rotation, 'L')
-        view(90,0)
+        view(90, 0)
         camtarget([128.0, 132.0, 130.0])
         campos([128.0, 2238.8, 130.0])
         camup([-1.0, 0.0, 0.0])
     elseif strcmp(rotation, 'R')
-        view(-90,0)
+        view(-90, 0)
         camtarget([128.0, 132.0, 130.0])
         campos([128.0, -2291.8, 130.0])
         camup([-1.0, 0.0, 0.0])
     else
-        fprintf('check the view positon\n')
+        fprintf('check the view position\n')
     end
 
-    l = camlight;
-    set(l,'Position',[50 2000 100]);
-
-    l2 = camlight;
-    set(l2,'Position',[50 -100 -100]);
-
-    camlight(0,0);
+    firstLight = camlight;
+    set(firstLight, 'Position', [50 2000 100]);
+    secondLight = camlight;
+    set(secondLight, 'Position', [50 -100 -100]);
+    camlight(0, 0);
     lighting phong;
+
+    % Jet colormap with a light grey band at zero.
     myColorMap = jet(256);
-    myColorMap(127:129,:) = 0.8;
+    myColorMap(127:129, :) = 0.8;
     colormap(myColorMap);
     axis image
     axis off
     hold on
-
 end

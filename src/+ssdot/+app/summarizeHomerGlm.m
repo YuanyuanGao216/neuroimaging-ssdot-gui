@@ -6,22 +6,26 @@ function summary = summarizeHomerGlm(runs)
     if isempty(runs)
         return;
     end
+
     glms = arrayfun(@(node) ssdot.io.readHomerGlm(node), runs);
     found = find([glms.found]);
     if isempty(found)
         summary.note = "The Homer processing stream has no hmrR_GLM call.";
         return;
     end
+
     reference = glms(found(1));
     if ~all(arrayfun(@(glm) sameTiming(glm, reference), glms(found)))
         summary.note = "Homer hmrR_GLM settings differ between recordings; they are listed per recording in the Log.";
         summary.perRecording = arrayfun(@(index) describeOne(runs(index).name, glms(index)), found(:));
         return;
     end
+
     scope = sprintf('all %d recordings', numel(runs));
     if numel(found) < numel(runs)
         scope = sprintf('%d of %d recordings', numel(found), numel(runs));
     end
+
     summary.glm = reference;
     summary.note = string(sprintf(['Homer hmrR_GLM (%s): time range %s s, basis %g, parameters %s, ' ...
         'short-separation %g mm, drift order %g.'], scope, mat2str(reference.trange), reference.idxBasis, ...
@@ -34,20 +38,24 @@ function summary = summarizeHomerGlm(runs)
 end
 
 function same = sameTiming(glm, reference)
+    %SAMETIMING True when glm has the reference's time range, basis, short-separation threshold and drift order.
     fields = ["trange", "idxBasis", "paramsBasis", "rhoSD_ssThresh", "driftOrder"];
     same = all(arrayfun(@(name) isequal(glm.(name), reference.(name)), fields));
 end
 
 function text = describeOne(name, glm)
+    %DESCRIBEONE One recording's hmrR_GLM settings, for the Log.
     text = string(sprintf('%s hmrR_GLM: trange %s, idxBasis %g, paramsBasis %s, rhoSD_ssThresh %g, driftOrder %g.', ...
         name, mat2str(glm.trange), glm.idxBasis, mat2str(glm.paramsBasis), glm.rhoSD_ssThresh, glm.driftOrder));
 end
 
 function supported = isSupportedBasis(glm)
+    %ISSUPPORTEDBASIS True for the modified gamma basis (idxBasis 2) with 6 parameters.
     supported = glm.idxBasis == 2 && numel(glm.paramsBasis) == 6;
 end
 
 function text = shortChannelNote(method)
+    %SHORTCHANNELNOTE A note when Homer's short-channel regression differs from the reconstruction's.
     % Homer flagNuisanceRMethod: 0 nearest, 1 highest correlation, 2 average of all short channels, 3 tCCA.
     % The SS-DOT reconstruction always regresses the average of all short channels (method 2).
     text = "";

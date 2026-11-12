@@ -10,6 +10,7 @@ classdef ModelView < handle
         end
 
         function render(obj, state)
+            %RENDER Draw the model view chosen in the Model tab for a state.
             choice = string(obj.app.modelMode.Value);
             if startsWith(choice, "Temporal")
                 obj.renderTemporal(state, choice);

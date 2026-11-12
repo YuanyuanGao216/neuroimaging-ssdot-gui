@@ -28,13 +28,13 @@ function testHashesEmptyAndExactBlockFiles(t)
     fixture = t.applyFixture(matlab.unittest.fixtures.TemporaryFolderFixture);
     file = fullfile(fixture.Folder, 'bytes.bin');
 
-    fid = fopen(file, 'wb');
-    fclose(fid);
+    fileId = fopen(file, 'wb');
+    fclose(fileId);
     verifyEqual(t, ssdot.io.fileHash(file), "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
 
-    fid = fopen(file, 'wb');
-    fwrite(fid, zeros(1048576, 1, 'uint8'), 'uint8');
-    fclose(fid);
+    fileId = fopen(file, 'wb');
+    fwrite(fileId, zeros(1048576, 1, 'uint8'), 'uint8');
+    fclose(fileId);
     verifyEqual(t, ssdot.io.fileHash(file), "30e14955ebf1352266dc2ff8067e68104607e750abb9d3b36582b8af909fcb58");
 end
 
@@ -70,8 +70,8 @@ function testEmptyLogsOfFinishedProcessesAreRemoved(t)
     content = fullfile(paths.logs, 'History_2147483001.log');
 
     for name = {finished, running}
-        fid = fopen(name{1}, 'w');
-        fclose(fid);
+        fileId = fopen(name{1}, 'w');
+        fclose(fileId);
     end
     writelines('kept', content);
 

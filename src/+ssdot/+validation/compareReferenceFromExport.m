@@ -14,16 +14,16 @@ function comparison = compareReferenceFromExport(recordFolder, datasetRoot, exte
         'Saved and current sensitivity masks differ.');
 
     E = GetExtinctions(data.optical.wavelengths) / 10;
-    n = numel(data.optical.channelIndices);
-    nt = numel(data.optical.time);
+    nChannels = numel(data.optical.channelIndices);
+    nSamples = numel(data.optical.time);
     nBrain = numel(M.mask_brain);
     nScalp = numel(M.mask_scalp);
     nCond = numel(data.conditionNames);
-    estimate = assertMemoryAvailable(n, nt, nBrain + nScalp, numel(data.hrfTime));
+    estimate = assertMemoryAvailable(nChannels, nSamples, nBrain + nScalp, numel(data.hrfTime));
 
     referenceFolder = fullfile(externalRoot, 'neurodot');
-    previous = path;
-    cleanup = onCleanup(@() path(previous));
+    previousPath = path;
+    cleanup = onCleanup(@() path(previousPath));
     addpath(referenceFolder, '-begin');
     assertPinnedReference(externalRoot, referenceFolder);
 
@@ -34,7 +34,7 @@ function comparison = compareReferenceFromExport(recordFolder, datasetRoot, exte
     for w = 1:2
         A = [double(adot.Adot(channels, M.mask_brain, w)), double(adotScalp.Adot_scalp(channels, M.mask_scalp, w))];
         inverse{w} = Tikhonov_invert_Amat(A, .01, .1);
-        columns = (w - 1) * n + (1:n);
+        columns = (w - 1) * nChannels + (1:nChannels);
         sequential{w} = data.optical.observed(:, columns) - data.optical.nuisanceOnly(:, columns);
     end
 
@@ -52,10 +52,10 @@ function comparison = compareReferenceFromExport(recordFolder, datasetRoot, exte
     ndR = ssO;
     count = zeros(1, nCond);
     for c = 1:nCond
-        stim = data.optical.conditionEvents;
-        match = find(string({stim.name}) == string(data.conditionNames{c}));
+        conditionEvents = data.optical.conditionEvents;
+        match = find(string({conditionEvents.name}) == string(data.conditionNames{c}));
         assert(isscalar(match), 'SSDOT:ReferenceCondition', 'Missing or ambiguous event name.');
-        events = stim(match).events;
+        events = conditionEvents(match).events;
         [timeO, count(c)] = ssdot.validation.eventAverage(T.T_HbO_brain, data.optical.time, events, T.time);
         timeR = ssdot.validation.eventAverage(T.T_HbR_brain, data.optical.time, events, T.time);
         ssO(:, :, c) = amplitudeO * timeO';
@@ -89,6 +89,7 @@ function comparison = compareReferenceFromExport(recordFolder, datasetRoot, exte
 end
 
 function data = loadExport(file)
+    % Saved study arrays, with the temporal basis recreated for older exports.
     availableVariables = string({whos('-file', file).name});
     names = {'optical', 'hboHrf', 'hbrHrf', 'hrfTime', 'mask', 'hemisphere', 'conditionNames', 'config'};
     if any(availableVariables == "temporalBasis")
@@ -129,18 +130,19 @@ function temporal = recreateTemporalBasis(data)
     end
 end
 
-function estimate = assertMemoryAvailable(n, nt, nVertices, nHrfTime)
+function estimate = assertMemoryAvailable(nChannels, nSamples, nVertices, nHrfTime)
     % Fail before the dense NeuroDOT inverse would exhaust the available memory.
     [userMemory, systemMemory] = memory;
     availableBytes = min(userMemory.MemAvailableAllArrays, systemMemory.PhysicalMemory.Available);
     reserve = 256 * 2^20;
-    estimate = 8 * (20 * nt * n + 12 * nVertices * n + 8 * nVertices * nHrfTime) + 128 * 2^20;
+    estimate = 8 * (20 * nSamples * nChannels + 12 * nVertices * nChannels + 8 * nVertices * nHrfTime) + 128 * 2^20;
     assert(isfinite(availableBytes) && estimate < availableBytes - reserve, 'SSDOT:ValidationMemory', ...
         'NeuroDOT comparison estimates %.2f GiB additional memory, %.2f GiB available.', ...
         estimate / 2^30, availableBytes / 2^30);
 end
 
 function assertPinnedReference(externalRoot, referenceFolder)
+    % The NeuroDOT routines on the path must match the hashes in the download receipt.
     receipt = jsondecode(fileread(fullfile(externalRoot, 'cedalion', 'provenance.json')));
     for name = ["Tikhonov_invert_Amat.m", "spectroscopy_img.m"]
         entry = receipt.assets(strcmp({receipt.assets.name}, name));

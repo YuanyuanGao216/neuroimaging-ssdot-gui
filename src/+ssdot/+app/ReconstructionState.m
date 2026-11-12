@@ -86,6 +86,7 @@ function isChanged = changed(previous, current, fields)
 end
 
 function value = fieldValue(config, name)
+    %FIELDVALUE config.(name), or [] when config has no such field.
     value = [];
     if isfield(config, name)
         value = config.(name);

@@ -248,6 +248,7 @@ fprintf(['REDUCED FIXTURE: channels=%d brainVertices=%d scalpVertices=%d time=%d
     nPairs, numel(brainMask), numel(scalpMask), nTime, size([Hbo Hsc], 1), size([Hbo Hsc], 2), ratio);
 
 function m = compare(name, a, b)
+    % Agreement metrics of two equally sized arrays.
     assert(isequal(size(a), size(b)), 'Size mismatch: %s', name);
     a = double(a(:));
     b = double(b(:));

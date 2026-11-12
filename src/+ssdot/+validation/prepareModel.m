@@ -14,7 +14,7 @@ function prepared = prepareModel(recording, rawModel, atlas, config, progress, s
 
     % The spatial basis of an earlier recording is reused when masks, channels
     % and settings match; otherwise it is built only after the resource check.
-    reuse =~isempty(shared) && isequal(shared.sensitivity.M, sensitivity.M) && ...
+    reuse = ~isempty(shared) && isequal(shared.sensitivity.M, sensitivity.M) && ...
         isequal(shared.sensitivity.channels, sensitivity.channels) && isequal(shared.config, config);
     if reuse
         spatialBasis = shared.model.spatialBasis;
@@ -27,7 +27,7 @@ function prepared = prepareModel(recording, rawModel, atlas, config, progress, s
         spatialBasis = [];
     end
 
-    resources =ssdot.app.estimateResources(recording, sensitivity, centers, temporal, config);
+    resources = ssdot.app.estimateResources(recording, sensitivity, centers, temporal, config);
     assert(resources.hostFits, 'SSDOT:ValidationMemory', ...
         ['Full-resolution study needs %.2f GiB additional RAM; %.2f GiB currently available. ' ...
         'Settings were not reduced.'], ...

@@ -202,8 +202,8 @@ function writeStudyReport(study)
             diagnostics.scales(3).penaltyOverComponentScale)});
         holdoutRows = {};
         for j = 1:numel(diagnostics.holdout)
-            h = diagnostics.holdout(j);
-            holdoutRows(end + 1, :) = {h.model, h.wavelengthNm, h.rmseOD, h.rSquaredTrainingMean};
+            entry = diagnostics.holdout(j);
+            holdoutRows(end + 1, :) = {entry.model, entry.wavelengthNm, entry.rmseOD, entry.rSquaredTrainingMean};
         end
         tableBlock({'Buffered holdout model', 'Wavelength nm', 'RMSE OD', 'R2 vs training channel mean'}, holdoutRows);
         tableBlock({'Condition', 'Hand', 'Hb', 'Side', 'SS-DOT mean uM', 'NeuroDOT mean uM', 'Spatial r'}, ...
@@ -287,6 +287,7 @@ function writeStudyReport(study)
     end
 
     function tableBlock(headers, rows)
+        % HTML table of a cell array of rows; nothing for an empty table.
         if isempty(rows)
             return;
         end
@@ -305,6 +306,7 @@ function writeStudyReport(study)
 end
 
 function text = formatCell(value)
+    % Table cell text; numbers that are empty or nonfinite read N/A.
     if isnumeric(value)
         if isempty(value) || any(~isfinite(value))
             text = "N/A";
@@ -317,6 +319,7 @@ function text = formatCell(value)
 end
 
 function document = htmlDocument(body)
+    % Complete standalone HTML page around the report body.
     style = "body{font:16px system-ui,sans-serif;max-width:1250px;margin:30px auto;padding:0 24px;" + ...
         "line-height:1.55;color:#202630}h1,h2{color:#163b53}" + ...
         "table{border-collapse:collapse;display:block;overflow:auto;margin:20px 0;font-size:14px}" + ...
@@ -328,6 +331,7 @@ function document = htmlDocument(body)
 end
 
 function value = finiteMedian(values)
+    % Median of the finite values; NaN when there are none.
     values = values(isfinite(values));
     value = NaN;
     if ~isempty(values)
@@ -363,28 +367,30 @@ function [overview, ablations, holdout, arms] = recordTables(records)
         ablations(end + 1, :) = {record.name, fullSse, noBrainSse, 100 * (noBrainSse - fullSse) / noBrainSse, ...
             diagnostics.conditioning.regularizedImageConditionUpperBound}; %#ok<AGROW>
         for j = 1:numel(diagnostics.holdout)
-            h = diagnostics.holdout(j);
-            holdout(end + 1, :) = {record.name, h.model, h.wavelengthNm, h.rmseOD, h.rSquaredTrainingMean, ...
-                h.targetPairs}; %#ok<AGROW>
+            entry = diagnostics.holdout(j);
+            holdout(end + 1, :) = {record.name, entry.model, entry.wavelengthNm, entry.rmseOD, ...
+                entry.rSquaredTrainingMean, entry.targetPairs}; %#ok<AGROW>
         end
         for j = 1:numel(diagnostics.regularization)
-            a = diagnostics.regularization(j);
-            arms(end + 1, :) = {record.name, a.alpha, a.baseline, a.imagePenalty, a.hboMaxAbsM * 1e6, ...
-                a.hbrMaxAbsM * 1e6}; %#ok<AGROW>
+            arm = diagnostics.regularization(j);
+            arms(end + 1, :) = {record.name, arm.alpha, arm.baseline, arm.imagePenalty, arm.hboMaxAbsM * 1e6, ...
+                arm.hbrMaxAbsM * 1e6}; %#ok<AGROW>
         end
     end
 end
 
 function rows = referenceComparisonRows(records)
+    % One table row per NeuroDOT comparison row of every recording that has one.
     rows = {};
     for k = 1:numel(records)
         record = records{k};
         if ~isfield(record, 'referenceComparison')
             continue;
         end
-        for c = record.referenceComparison.rows(:)'
-            rows(end + 1, :) = {record.name, c.conditionName, c.chromophore, c.hemisphere, ...
-                c.ssdotMeanM * 1e6, c.neurodotMeanM * 1e6, c.spatialPearsonR}; %#ok<AGROW>
+        for comparison = record.referenceComparison.rows(:)'
+            rows(end + 1, :) = {record.name, comparison.conditionName, comparison.chromophore, ...
+                comparison.hemisphere, comparison.ssdotMeanM * 1e6, comparison.neurodotMeanM * 1e6, ...
+                comparison.spatialPearsonR}; %#ok<AGROW>
         end
     end
 end
@@ -403,24 +409,29 @@ function rows = scenarioRows(results)
 end
 
 function rows = comparisonRows(benchmark)
+    % Benchmark method-comparison rows in report units.
     rows = {};
     if ~isfield(benchmark, 'comparison')
         return;
     end
-    for c = benchmark.comparison(:)'
-        rows(end + 1, :) = {c.conditionName, c.hand, c.chromophore, c.hemisphere, c.ssdotMeanM * 1e6, ...
-            c.neurodotMeanM * 1e6, c.spatialPearsonR}; %#ok<AGROW>
+    for comparison = benchmark.comparison(:)'
+        rows(end + 1, :) = {comparison.conditionName, comparison.hand, comparison.chromophore, ...
+            comparison.hemisphere, comparison.ssdotMeanM * 1e6, comparison.neurodotMeanM * 1e6, ...
+            comparison.spatialPearsonR}; %#ok<AGROW>
     end
 end
 
 function rows = publicRows(public)
+    % One table row per audited public recording.
     rows = {};
-    for r = public.recordings(:)'
-        rows(end + 1, :) = {r.name, r.samples, r.sampleRate, r.basicFinite, r.st001GeometryCompatible}; %#ok<AGROW>
+    for recording = public.recordings(:)'
+        rows(end + 1, :) = {recording.name, recording.samples, recording.sampleRate, recording.basicFinite, ...
+            recording.st001GeometryCompatible}; %#ok<AGROW>
     end
 end
 
 function text = escapeHtml(text)
+    % Escape the characters that are markup in HTML text and attributes.
     text = string(text);
     text = replace(text, "&", "&amp;");
     text = replace(text, "<", "&lt;");
@@ -429,8 +440,9 @@ function text = escapeHtml(text)
 end
 
 function writeText(file, text)
-    fid = fopen(file, 'w', 'n', 'UTF-8');
-    assert(fid >= 0);
-    cleanup = onCleanup(@() fclose(fid));
-    fprintf(fid, '%s', text);
+    % Write text to a UTF-8 file.
+    fileId = fopen(file, 'w', 'n', 'UTF-8');
+    assert(fileId >= 0);
+    cleanup = onCleanup(@() fclose(fileId));
+    fprintf(fileId, '%s', text);
 end

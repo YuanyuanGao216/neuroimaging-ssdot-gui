@@ -39,6 +39,7 @@ classdef SignalsView < handle
         end
 
         function render(obj, node, busy)
+            %RENDER Plot the chosen stored signal of a recording, with its stimuli unless averaged.
             controls = obj.app.signals;
             if ~isa(node, 'RunClass')
                 controls.average.Enable = 'off';
@@ -141,6 +142,7 @@ classdef SignalsView < handle
 end
 
 function pairs = channelPairs(node)
+    %CHANNELPAIRS Unique source-detector pairs of a recording, in measurement-list order.
     measurements = node.acquired.GetMeasList();
     pairs = unique(measurements(:, 1:2), 'rows', 'stable');
 end

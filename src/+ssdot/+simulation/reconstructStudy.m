@@ -84,18 +84,18 @@ function reconstructStudy(cfg)
         GHbOMat(:, :, ii) = hbOS;
         GHbRMat(:, :, ii) = hbRS;
 
-        absXG = absXG + absXS ./ nSubject;
-        axYG = axYG + axYS ./ nSubject;
+        absXG = absXG + absXS./nSubject;
+        axYG = axYG + axYS./nSubject;
         cnrG = addScaledCnr(cnrG, cnrS, nSubject);
     end
 
     %% Scale the images
     groupPeak = max(mean(GHbOMat, 3));
-    GHbOMatScaled = GHbOMat ./ groupPeak;
-    GHbRMatScaled = GHbRMat ./ groupPeak;
+    GHbOMatScaled = GHbOMat./groupPeak;
+    GHbRMatScaled = GHbRMat./groupPeak;
     zeroPeak = max(mean(hbOSZero, 3));
-    hbOSZeroScaled = hbOSZero ./ zeroPeak;
-    hbRSZeroScaled = hbRSZero ./ zeroPeak;
+    hbOSZeroScaled = hbOSZero./zeroPeak;
+    hbRSZeroScaled = hbRSZero./zeroPeak;
 
     output = ssdot.simulation.evaluatePerformance(GHbOMatScaled, GHbRMatScaled, hbOSZeroScaled, hbRSZeroScaled, ...
         cfg, faces, brainVertices);
@@ -140,11 +140,11 @@ function [hbOSZero, hbRSZero] = reconstructZeroReference(cfg, snirfFile, nRuns, 
         calculatedMatZero.Conc = ssdot.recon.reconstructConcentrations(calculatedMatZero, cfg);
         [hbOZero, hbRZero] = ssdot.recon.projectToVertices(calculatedMatZero, nVertexBrain);
         if jj == 1
-            hbOSZero = hbOZero ./ nRuns;
-            hbRSZero = hbRZero ./ nRuns;
+            hbOSZero = hbOZero./nRuns;
+            hbRSZero = hbRZero./nRuns;
         else
-            hbOSZero = hbOSZero + hbOZero ./ nRuns;
-            hbRSZero = hbRSZero + hbRZero ./ nRuns;
+            hbOSZero = hbOSZero + hbOZero./nRuns;
+            hbRSZero = hbRSZero + hbRZero./nRuns;
         end
     end
     if cfg.spatially_regu
@@ -173,11 +173,11 @@ function [hbOS, hbRS, absXS, axYS, cnrS] = reconstructSubject(cfg, snirfFile, ma
         [HbO, HbR] = ssdot.recon.projectToVertices(calculatedMat, nVertexBrain);
 
         if jj == 1
-            hbOS = HbO ./ nRuns;
-            hbRS = HbR ./ nRuns;
+            hbOS = HbO./nRuns;
+            hbRS = HbR./nRuns;
         else
-            hbOS = hbOS + HbO ./ nRuns;
-            hbRS = hbRS + HbR ./ nRuns;
+            hbOS = hbOS + HbO./nRuns;
+            hbRS = hbRS + HbR./nRuns;
         end
         % As in the original image_recon.m, the running sum is rescaled by ll
         % after every run, not once after the loop.
@@ -187,8 +187,8 @@ function [hbOS, hbRS, absXS, axYS, cnrS] = reconstructSubject(cfg, snirfFile, ma
                 hbRS(:, condition) = bsxfun(@rdivide, hbRS(:, condition), calculatedMat.ll');
             end
         end
-        absXS = absXS + absX ./ nRuns;
-        axYS = axYS + axY ./ nRuns;
+        absXS = absXS + absX./nRuns;
+        axYS = axYS + axY./nRuns;
         cnrS = addScaledCnr(cnrS, cnr, nRuns);
     end
 end
@@ -198,7 +198,7 @@ function cnr = zeroCnr()
 end
 
 function total = addScaledCnr(total, cnr, count)
-    total.Contrast = total.Contrast + cnr.Contrast ./ count;
-    total.image_CNR = total.image_CNR + cnr.image_CNR ./ count;
-    total.error = total.error + cnr.error ./ count;
+    total.Contrast = total.Contrast + cnr.Contrast./count;
+    total.image_CNR = total.image_CNR + cnr.image_CNR./count;
+    total.error = total.error + cnr.error./count;
 end

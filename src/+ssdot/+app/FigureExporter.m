@@ -68,7 +68,7 @@ classdef FigureExporter < handle
             formats = ["png", "pdf", "fig"];
             options.formats = formats([options.png, options.pdf, options.fig]);
             assert(~isempty(options.formats), 'SSDOT:ExportFormat', 'Choose an export format in Settings > Figure export.');
-            assert(any([options.maps options.temporal options.kernels options.rois options.inputViews]), ...
+            assert(any([options.maps, options.temporal, options.kernels, options.rois, options.inputViews]), ...
                 'SSDOT:ExportContent', 'Choose at least one figure type in Settings > Figure export.');
 
             scale = string(app.scaleDropDown.Value);

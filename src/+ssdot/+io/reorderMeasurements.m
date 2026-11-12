@@ -17,6 +17,7 @@ function snirfObj = reorderMeasurements(snirfObj, referenceFile)
     assert(max(sources) <= size(snirfObj.probe.sourcePos3D, 1) && ...
         max(detectors) <= size(snirfObj.probe.detectorPos3D, 1), ...
         'SSDOT:ProbeGeometry', 'Required optodes are absent from the resting recording.');
+
     tolerance = 1e-6;
     sourceOffsets = abs(snirfObj.probe.sourcePos3D(sources, :) - reference.probe.sourcePos3D(sources, :));
     detectorOffsets = abs(snirfObj.probe.detectorPos3D(detectors, :) - reference.probe.detectorPos3D(detectors, :));

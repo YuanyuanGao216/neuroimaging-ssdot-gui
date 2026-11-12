@@ -10,6 +10,7 @@ classdef RoiTab < handle
         end
 
         function render(obj, state)
+            %RENDER Show the ROI viewer for a state, or a placeholder when it has no atlas.
             app = obj.controller.app;
             if isempty(state.atlas)
                 obj.close();
@@ -30,6 +31,7 @@ classdef RoiTab < handle
         end
 
         function window = open(obj, state)
+            %OPEN Show a state in the ROI tab and return its viewer.
             controller = obj.controller;
             controller.selectedNode = state.node;
             controller.displayedState = state;

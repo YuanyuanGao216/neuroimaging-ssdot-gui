@@ -1,6 +1,6 @@
 function report = benchmarkReconstruction(device, compareReferences)
     %BENCHMARKRECONSTRUCTION Measure unchanged full Research settings on ST001.
-    % addpath('research'); report=benchmarkReconstruction("gpu",true);
+    % Usage: addpath('research'); report = benchmarkReconstruction("gpu", true);
     % References: compressed primal normal equations and original-space matrix-free LSQR.
     if nargin < 1
         device = "gpu";
@@ -13,7 +13,8 @@ function report = benchmarkReconstruction(device, compareReferences)
     addpath(fullfile(root, 'src'));
     environment = ssdot.app.initializeEnvironment(root);
     folder = fullfile(root, 'ST001');
-    cfg = setfield(ssdot.app.defaultConfig(), 'device', device);
+    cfg = ssdot.app.defaultConfig();
+    cfg.device = device;
     device = ssdot.recon.resolveDevice(device);
     gpu = ssdot.app.gpuDiagnostics(false);
     samples = struct([]);
@@ -150,6 +151,7 @@ function report = benchmarkReconstruction(device, compareReferences)
         report.primaryMemory.peakWorkingSet/2^30, report.observedGpuAdditionalBytes/2^30);
 
     function output = augmented(input, transpose)
+        % LSQR operator of the column-scaled design stacked on the square-root penalties.
         if strcmp(transpose, 'notransp')
             x = input./scaling;
             output = [ssdot.recon.applyFactorizedDesign(factors, observations, x, false); sqrt(penalties).*x];
@@ -160,6 +162,7 @@ function report = benchmarkReconstruction(device, compareReferences)
     end
 
     function output = originalImageNormal(input)
+        % Image block of the original-space normal matrix applied to a vector.
         padded = [input; zeros(columnCount - imageColumns, 1)];
         values = ssdot.recon.applyFactorizedDesign(factors, observations, padded, false);
         output = ssdot.recon.applyFactorizedDesign(factors, observations, values, true);
@@ -167,6 +170,7 @@ function report = benchmarkReconstruction(device, compareReferences)
     end
 
     function [hbo, hbr] = maps(coefficients)
+        % Vertex maps of a coefficient vector.
         concentrations = ssdot.recon.reconstructConcentrations(spatial, temporal, coefficients', 1, false, 'cpu');
         projection = struct('T', temporal, 'M', sensitivity.M, 'Conc', concentrations);
         [hbo, hbr] = ssdot.recon.projectToVertices(projection, model.vertexCount);
@@ -177,6 +181,7 @@ function report = benchmarkReconstruction(device, compareReferences)
     end
 
     function progress(label, current, total)
+        % Record a memory sample at each new stage and at each stage's completion.
         if string(label) ~= lastLabel || current == total
             sample = sampleMemory();
             sample.label = string(label);
@@ -191,6 +196,7 @@ function report = benchmarkReconstruction(device, compareReferences)
     end
 
     function sample = sampleMemory()
+        % Current and peak process memory, and the available GPU memory when a GPU is present.
         process = System.Diagnostics.Process.GetCurrentProcess();
         process.Refresh();
         sample = struct('workingSet', double(process.WorkingSet64), ...

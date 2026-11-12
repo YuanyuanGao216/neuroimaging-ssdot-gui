@@ -107,9 +107,9 @@ function study = runStudy(options, observer)
         entry = data.records(index);
         label = "ST001 recording " + index;
         progress(label + ": preparing full Research model", 0, numel(data.records));
-        cfg = ssdot.app.defaultConfig();
-        prepared = ssdot.validation.prepareModel(entry.recording, data.rawModel, data.atlas, cfg, @progress, shared);
-        result = ssdot.recon.reconstructImage(prepared.model, prepared.observations, cfg, @progress);
+        config = ssdot.app.defaultConfig();
+        prepared = ssdot.validation.prepareModel(entry.recording, data.rawModel, data.atlas, config, @progress, shared);
+        result = ssdot.recon.reconstructImage(prepared.model, prepared.observations, config, @progress);
         folder = fullfile(root, "st001-" + compose('%03d', index));
 
         if options.st001
@@ -172,6 +172,7 @@ function study = runStudy(options, observer)
 end
 
 function options = withDefaults(options, defaults)
+    % Fill every option the caller did not set from the defaults.
     names = fieldnames(defaults);
     for k = 1:numel(names)
         if ~isfield(options, names{k})
@@ -198,19 +199,23 @@ function root = createOutputFolder(options)
 end
 
 function canonical = canonicalPath(folder)
+    % Absolute path with links and relative segments resolved.
     canonical = string(java.io.File(char(folder)).getCanonicalPath());
 end
 
 function timestamp = utcTimestamp()
+    % Current time as an ISO 8601 UTC string.
     timestamp = string(datetime('now', 'TimeZone', 'UTC', 'Format', "yyyy-MM-dd'T'HH:mm:ss'Z'"));
 end
 
 function assertNotCancelled(root)
+    % A cancel.request file in the study folder stops the study at the next check.
     assert(~isfile(fullfile(root, 'cancel.request')), 'SSDOT:ValidationCancelled', ...
         'Validation cancelled at a safe processing boundary. Completed outputs retained.');
 end
 
 function state = completionState(study)
+    % Final study state from the recorded failures and synthetic recovery criteria.
     state = "Completed";
     if ~isempty(study.failures) || (~isempty(study.synthetic) && ~isempty(study.synthetic.failures))
         state = "Completed with limitations";

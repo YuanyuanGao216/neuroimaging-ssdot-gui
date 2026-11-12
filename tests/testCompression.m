@@ -206,6 +206,7 @@ function [model, observations, config] = fixture()
 end
 
 function A = optics(nChannels, nVertices)
+    % Random optical sensitivities for both wavelengths and chromophores.
     A = struct('w1_HbO', rand(nChannels, nVertices), 'w2_HbO', rand(nChannels, nVertices), ...
         'w1_HbR', rand(nChannels, nVertices), 'w2_HbR', rand(nChannels, nVertices));
 end
@@ -260,13 +261,13 @@ function H = expandedDesign(model)
     H = [];
     for tissue = 1:2
         [kernels, sensitivity, designs] = tissues{tissue, :};
-        for hb = 1:2
-            design = designs{hb};
+        for chromophore = 1:2
+            design = designs{chromophore};
             for kernel = 1:size(kernels, 1)
                 for basis = 1:size(design, 2)
                     change = zeros(size(sensitivity.w1_HbO, 1), size(design, 1), 2);
                     for wavelength = 1:2
-                        name = sprintf('w%d_%s', wavelength, chromophores(hb));
+                        name = sprintf('w%d_%s', wavelength, chromophores(chromophore));
                         change(:, :, wavelength) = sensitivity.(name) * kernels(kernel, :)' * design(:, basis)';
                     end
                     H(:, end + 1) = change(:); %#ok<AGROW>
@@ -277,6 +278,7 @@ function H = expandedDesign(model)
 end
 
 function value = largestEigenvalue(M)
+    % Largest eigenvalue of the symmetric part of M; 0 for an empty matrix.
     value = 0;
     if ~isempty(M)
         value = max(eig((M + M') / 2));
