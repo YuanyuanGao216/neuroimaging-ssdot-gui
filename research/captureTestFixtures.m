@@ -16,7 +16,7 @@ function captureTestFixtures()
     pinned = '31bb4206dc55bbe9b67030864629b76554b62aec';
     [status, head] = system(sprintf('git -C "%s" rev-parse HEAD', reference));
     assert(status == 0 && strcmp(strtrim(head), pinned), 'The professor repository must be at commit %s.', pinned);
-    addpath(fullfile(root, 'research', 'compat'), '-begin');
+    addpath(fullfile(root, 'external', 'compat', 'statistics'), '-begin');
     addpath(fullfile(reference, 'code'), '-begin');
 
     datasetRoot = fullfile(root, 'datasets', 'ST001');

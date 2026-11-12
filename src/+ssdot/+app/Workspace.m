@@ -490,7 +490,7 @@ classdef Workspace < handle
         function source = averageFor(obj, node)
             %AVERAGEFOR The state that represents node's current result, averaging its members when needed.
             source = ssdot.app.ReconstructionState.empty;
-            if isa(node, 'RunClass')
+            if ssdot.io.isRecording(node)
                 state = obj.stateFor(node);
                 % A result moved out of memory is read back from the disk cache.
                 if isempty(state.result) && strlength(state.cacheKey) > 0 && ~isempty(state.atlas)
@@ -590,7 +590,7 @@ function runs = leafRuns(node)
     children = ssdot.io.nodeChildren(node);
     runs = [];
     if isempty(children)
-        if isa(node, 'RunClass')
+        if ssdot.io.isRecording(node)
             runs = node;
         end
         return;
@@ -637,10 +637,11 @@ end
 
 function provenance = averageProvenance(reference, members, names, common, omitted, nodeName)
     %AVERAGEPROVENANCE The reference member's provenance, describing the average and its members instead.
-    kinds = struct('RunClass', "recordings", 'SessClass', "sessions", 'SubjClass', "subjects", 'GroupClass', "groups");
+    kinds = struct('run', "recordings", 'sess', "sessions", 'subj', "subjects", 'group', "groups");
     kind = "members";
-    if isfield(kinds, class(members(1).node))
-        kind = kinds.(class(members(1).node));
+    node = members(1).node;
+    if isobject(node) && isprop(node, 'type') && isfield(kinds, node.type)
+        kind = kinds.(node.type);
     end
 
     % Start from the reference member's provenance, without the fields that describe its own sources.

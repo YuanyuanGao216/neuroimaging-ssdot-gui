@@ -1,12 +1,20 @@
-function group = loadDataset(folder, progress)
-    %LOADDATASET Rebase and load a processed Homer tree without modifying files.
-    % Optional progress(message,completed,total) runs between blocking reads.
+function group = loadDataset(folder, progress, cacheFolder)
+    %LOADDATASET Load a dataset without modifying its files.
+    % A dataset processed in Homer3 (derivatives/homer/groupResults.mat) is read as stored. A folder
+    % of SNIRF recordings without Homer3 results is processed by the app with Homer3, cached in
+    % cacheFolder (default: the app's cache). Optional progress(message,completed,total).
     if nargin < 2
         progress = [];
     end
 
     filename = fullfile(folder, "derivatives", "homer", "groupResults.mat");
-    assert(isfile(filename), "SSDOT:MissingGroupResults", "Missing Homer group results: %s", filename);
+    if ~isfile(filename)
+        if nargin < 3
+            cacheFolder = ssdot.app.runtimePaths().cache;
+        end
+        group = ssdot.homer.openDataset(folder, cacheFolder, progress);
+        return
+    end
     reportProgress(progress, "Reading groupResults.mat", 0, 0);
     loaded = load(filename, "group");
     assert(isfield(loaded, "group") && isa(loaded.group, "GroupClass"), ...

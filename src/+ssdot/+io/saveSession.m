@@ -23,7 +23,7 @@ function saveSession(filename, state, automaticRois)
         end
     end
 
-    if ~isempty(state.node) && isa(state.node, 'RunClass')
+    if ~isempty(state.node) && ssdot.io.isRecording(state.node)
         source = fullfile(char(state.datasetRoot), char(state.node.name));
         if isfile(source)
             ssdotSession.recordingHash = ssdot.io.fileHash(source);

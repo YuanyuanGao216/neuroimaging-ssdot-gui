@@ -16,7 +16,7 @@ classdef DatasetActions < handle
                 initial = controller.workspace.datasetRoot;
             end
             folder = controller.chooser.folder(initial, ...
-                'Select dataset folder containing derivatives/, fw/ and atlasViewer.mat');
+                'Select a dataset folder: SNIRF recordings or Homer3 results, with fw/ and atlasViewer.mat');
             if strlength(folder) > 0
                 obj.open(folder);
             end
@@ -34,12 +34,14 @@ classdef DatasetActions < handle
             cleanup = onCleanup(@() controller.finishWork());
             controller.clearError();
             app.statusLabel.Text = 'Opening dataset...';
-            app.setBanner('Opening dataset: reading stored Homer results. No analysis is run.', 'info');
+            app.setBanner(['Opening dataset: reading stored Homer3 results, or processing SNIRF recordings ' ...
+                'with Homer3 (cached after the first time). No reconstruction is run.'], 'info');
             controller.progress.openLoadDialog();
 
             % A failed or cancelled read leaves the previously opened dataset in place.
             try
-                group = ssdot.io.loadDataset(folder, @(message, done, total) obj.reportRead(message, done, total));
+                group = ssdot.io.loadDataset(folder, @(message, done, total) obj.reportRead(message, done, total), ...
+                    controller.environment.paths.cache);
             catch exception
                 outcome = 'Opening failed.';
                 if strcmp(exception.identifier, 'SSDOT:Cancelled')
@@ -100,7 +102,7 @@ classdef DatasetActions < handle
             controller.selectedNode = node;
             state = workspace.stateFor(node);
             controller.displayedState = state;
-            if isa(node, 'RunClass')
+            if ssdot.io.isRecording(node)
                 controller.signals.prepare(node);
             end
             controller.roiTab.close();

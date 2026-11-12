@@ -12,6 +12,10 @@ function environment = initializeEnvironment(root)
         addpath(genpath(homer));
         addpath(genpath(fullfile(root, 'external', 'legacy')));
     end
+    % Homer3's GLM reports p-values with tcdf; without the Statistics Toolbox an exact stand-in is used.
+    if isempty(which('tcdf'))
+        addpath(fullfile(root, 'external', 'compat', 'statistics'));
+    end
 
     dataRoot = string(getenv('SSDOT_DATA_ROOT'));
     if strlength(dataRoot) == 0

@@ -57,7 +57,7 @@ classdef ModelView < handle
             elseif choice == "Temporal basis"
                 ssdot.viz.plotTemporalBasis(obj.app.modelAxes, state.temporalBasis);
                 obj.setNotice(state.nodeName + ": temporal basis used by the most recent analysis.");
-            elseif ~isa(state.node, 'RunClass')
+            elseif ~ssdot.io.isRecording(state.node)
                 obj.showUnavailable("The convolved temporal design is shown for a recording.");
             else
                 time = ssdot.io.readRun(state.node).time;

@@ -88,7 +88,7 @@ classdef AnalysisActions < handle
             controller.dataset.refreshShownList();
 
             % A shown average may have changed or lost its result, so its view is drawn again.
-            if ~isempty(controller.selectedNode) && ~isa(controller.selectedNode, 'RunClass')
+            if ~isempty(controller.selectedNode) && ~ssdot.io.isRecording(controller.selectedNode)
                 state = workspace.stateFor(controller.selectedNode);
                 if isempty(state.result)
                     controller.app.clearDataViews();

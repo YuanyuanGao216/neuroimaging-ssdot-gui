@@ -1,6 +1,6 @@
 function inputs = checkWorkflowInputs(datasetRoot, node, atlasFile, forwardFolder, cache)
     %CHECKWORKFLOWINPUTS Read and validate scientific inputs before computation.
-    assert(isa(node, 'RunClass'), 'SSDOT:RecordingSelection', 'Select one recording.');
+    assert(ssdot.io.isRecording(node), 'SSDOT:RecordingSelection', 'Select one recording.');
     requiredFiles = [string(atlasFile), fullfile(forwardFolder, 'fw', 'Adot.mat'), ...
         fullfile(forwardFolder, 'fw', 'Adot_scalp.mat'), fullfile(datasetRoot, string(node.name))];
     missing = requiredFiles(~arrayfun(@isfile, requiredFiles));

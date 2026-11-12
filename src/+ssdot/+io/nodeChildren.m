@@ -1,6 +1,8 @@
 function children = nodeChildren(node)
     %NODECHILDREN Keep Homer hierarchy knowledge in one adapter.
-    if isa(node, "GroupClass")
+    if isa(node, "ssdot.homer.DatasetNode")
+        children = node.children;
+    elseif isa(node, "GroupClass")
         children = node.subjs;
     elseif isa(node, "SubjClass")
         children = node.sess;

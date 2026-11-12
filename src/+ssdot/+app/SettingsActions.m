@@ -74,7 +74,7 @@ classdef SettingsActions < handle
             else
                 workspace.clearAverages();
                 % A shown average no longer exists; select() then shows the first recording.
-                if ~isa(controller.selectedNode, 'RunClass')
+                if ~ssdot.io.isRecording(controller.selectedNode)
                     controller.selectedNode = [];
                 end
                 controller.dataset.refreshShownList();

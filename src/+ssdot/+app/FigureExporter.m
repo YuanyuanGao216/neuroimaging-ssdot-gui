@@ -227,7 +227,7 @@ classdef FigureExporter < handle
                 data.comparison = viewer.comparison();
             end
 
-            if options.inputViews && isa(state.node, 'RunClass')
+            if options.inputViews && ssdot.io.isRecording(state.node)
                 data.signals = obj.channelSignals(state.node);
                 if isempty(state.sensitivity) && ~isempty(state.atlas)
                     obj.loadSensitivity(state);

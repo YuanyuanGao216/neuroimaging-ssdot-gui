@@ -41,7 +41,7 @@ classdef SignalsView < handle
         function render(obj, node, busy)
             %RENDER Plot the chosen stored signal of a recording, with its stimuli unless averaged.
             controls = obj.app.signals;
-            if ~isa(node, 'RunClass')
+            if ~ssdot.io.isRecording(node)
                 controls.average.Enable = 'off';
                 controls.condition.Enable = 'off';
                 obj.showUnavailable("Signals belong to individual recordings. Choose a recording in the Shown list.");

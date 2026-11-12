@@ -2,7 +2,7 @@
 
 A MATLAB application for short-separation diffuse optical tomography (SS-DOT), based on [Gao et al. (2023)](https://doi.org/10.1117/1.NPh.10.2.025007) and the [original SS-DOT implementation](https://github.com/YuanyuanGao216/SSDOT).
 
-Load processed fNIRS recordings, reconstruct HbO/HbR maps, inspect signals and sensitivity, compare ROIs, and export results from one workspace.
+Open fNIRS recordings (SNIRF files or Homer3 results), reconstruct HbO/HbR maps, inspect signals and sensitivity, compare ROIs, and export results from one workspace.
 
 ## Requirements
 
@@ -11,7 +11,7 @@ Load processed fNIRS recordings, reconstruct HbO/HbR maps, inspect signals and s
 - Signal Processing Toolbox is needed for filtering and motion-correction workflows.
 - Optional external-data validation uses Python with NumPy, SciPy and h5py. The GUI itself does not require Python.
 
-Bundled Homer dependencies are initialized automatically.
+Bundled Homer3 is initialized automatically. Without the Statistics and Machine Learning Toolbox, an exact stand-in supplies the `tcdf` that Homer3's GLM uses for its p-values.
 
 ## Getting started
 
@@ -21,7 +21,7 @@ Open the repository folder in MATLAB and run:
 main
 ```
 
-1. Click **Open dataset...** and select the included `datasets/ST001` folder or another compatible dataset. Opening reads the stored Homer results and shows an **Overview** of recordings, durations, channels, wavelengths, conditions and model files. Nothing is computed.
+1. Click **Open dataset...** and select an included dataset (`datasets/ST001` or `datasets/ds007420`) or another compatible dataset. A dataset processed in Homer3 is read as stored; a folder of SNIRF recordings is processed with Homer3 first (see [Dataset requirements](#dataset-requirements)). The **Overview** then shows recordings, durations, channels, wavelengths, conditions and model files. No reconstruction is run.
 2. Optionally review **Settings** and the compute device. Settings are remembered between sessions; **Save settings...** and **Load settings...** keep named configurations, and **Restore defaults** resets them.
 3. Press **Run Analysis**. For each recording it checks the inputs, prepares sensitivity, temporal and spatial bases, reconstructs HbO/HbR and calculates the ROI for every condition. It then averages the results, with T and P values (see below). Progress and the current step are shown in the Analysis panel; **Cancel** stops at the next safe boundary and keeps completed recordings.
 4. Choose a recording or an average in **Shown** and explore **Results** (HbO/HbR, T and P maps), **ROI**, **Signals** and **Model**. Changing what is shown only changes the display.
@@ -42,7 +42,7 @@ Settings apply to the whole workspace. Changing them never discards results: exi
 
 ## Dataset requirements
 
-The GUI expects processed Homer data and a matching AtlasViewer/forward model. Raw SNIRF files alone are insufficient. A typical dataset contains:
+A dataset is a folder of SNIRF recordings with a matching AtlasViewer/forward model:
 
 ```text
 dataset/
@@ -50,13 +50,16 @@ dataset/
 ├── fw/
 │   ├── Adot.mat
 │   └── Adot_scalp.mat
-├── derivatives/
-│   └── homer/
-│       ├── groupResults.mat
-│       └── ... associated processed run files
-└── sess01/
-    └── ... raw SNIRF recordings
+├── sub-01/                 recordings in the folder, in subject folders,
+│   └── ... SNIRF files     or in subject/session folders (BIDS sub-*/ses-*/nirs)
+└── derivatives/homer/      optional: results of processing in Homer3
 ```
+
+If the folder holds Homer3 results (`derivatives/homer/groupResults.mat`, as in ST001), they are used as stored. Otherwise the app processes every recording with the bundled, stock Homer3 v1.87.0 when the dataset is opened, using the folder's Homer3 configuration (`*.cfg`) if it has one, or else the app's default ([processOpt_default.cfg](src/+ssdot/+homer/processOpt_default.cfg), the lab's protocol used for ST001: channel pruning, spline/Savitzky-Golay motion correction, 0-0.5 Hz band-pass, motion-based event rejection, conversion to concentration and the GLM). Processing writes nothing into the dataset folder: results are cached under `results/` and reused while the recording, configuration and Homer3 version are unchanged, so only the first opening takes long (about 13 s per recording). The app's processing reproduces ST001's stored Homer3 results to rounding error.
+
+Included datasets:
+- `datasets/ST001`: three recordings processed by the lab in Homer3.
+- `datasets/ds007420`: the 36 ball-squeezing recordings (12 subjects) of Gao et al.'s public dataset ([OpenNeuro ds007420](https://openneuro.org/datasets/ds007420), CC0), with the forward model of a template-registered head built for this project. As in ST001, each SNIRF file holds the registered optode positions of the model; the recordings are otherwise unchanged. [buildPublicDataset.m](research/buildPublicDataset.m) rebuilds it.
 
 Reconstruction requires continuous optical density, channel-activity metadata, task events, two wavelengths, and usable short-separation channels. Recording channels, wavelengths, probe coordinates, units and mesh ordering must match the forward model. Model discovery validates compatibility; it does not perform registration or substitute models from another dataset.
 
@@ -68,7 +71,7 @@ Scientific parameters remain explicit and should be selected for the acquisition
 
 The reconstruction backend uses exact temporal QR compression to avoid materializing the expanded design matrix. It retains double precision and the configured regularization objective without reducing spatial resolution.
 
-Opening a dataset also reads the `hmrR_GLM` call stored in its Homer processing stream (time range, basis type, gamma parameters, short-separation threshold and drift order) and reports where it differs from the current settings. It is never applied automatically. Only the modified gamma basis (`idxBasis` 2) is supported by the reconstruction. The reconstruction always regresses the average of all short channels; if Homer used a different short-channel method, the Overview says so.
+Opening a dataset also reads the `hmrR_GLM` call in its Homer3 processing stream (time range, basis type, gamma parameters, short-separation threshold and drift order) and reports where it differs from the current settings. It is never applied automatically. Only the modified gamma basis (`idxBasis` 2) is supported by the reconstruction. The reconstruction always regresses the average of all short channels; if Homer used a different short-channel method, the Overview says so.
 
 The temporal design uses onset impulses and configured-duration gamma smoothing. Results in older sessions computed with event-duration spreading are labelled as such. Recorded event durations remain unchanged. Current defaults are defined in [defaultConfig.m](src/+ssdot/+app/defaultConfig.m); temporal compatibility does not imply that every application setting matches the original paper's protocol.
 
@@ -85,7 +88,7 @@ Run Analysis calculates one automatic ROI per condition with the existing `findR
 
 **Export figures...** saves available maps, temporal bases, kernel centers and ROI views. PNG is the default; PDF and editable MATLAB FIG formats, resolution and figure size are set under **Settings > Figure export**. Exports use the color scale, colormap, P-value correction and non-ROI display currently chosen in the Results and ROI tabs. Raw/OD and probe/sensitivity views are optional. Exports use a new destination subfolder, never overwrite files and preserve the underlying numerical values. **Save session...** stores the shown recording's result, settings and ROIs; **Open session...** restores it for the matching recording and adopts its settings.
 
-Generated caches, logs, reports and sessions are stored under ignored `results/`. Owned caches, temporary files and inactive logs have cleanup policies (empty logs of finished sessions are removed at startup); deliberate exports, saved sessions and scientific reports are retained. Original dataset files are not modified.
+Generated caches, logs, reports and sessions are stored under ignored `results/`. Owned caches (results 7 days, Homer3 processing 30 days, each up to 2 GiB), temporary files and inactive logs have cleanup policies (empty logs of finished sessions are removed at startup); deliberate exports, saved sessions and scientific reports are retained. Original dataset files are not modified.
 
 ## Architecture
 
@@ -104,12 +107,14 @@ flowchart LR
 | --- | --- |
 | `src/+ssdot/+app` | Workspace window, explicit analysis workflow and per-recording state |
 | `src/+ssdot/+io` | Dataset/model adapters, ROI and session persistence |
+| `src/+ssdot/+homer` | Processing SNIRF recordings with Homer3's processing stream |
 | `src/+ssdot/+recon` | Numerical functions with explicit inputs and outputs |
 | `src/+ssdot/+viz` | Shared plotting and figure export |
 | `src/+ssdot/+simulation` | Synthetic data and historical simulation workflows |
 | `src/+ssdot/+validation` | Numerical diagnostics and validation reporting |
 | `external/homer3` | Stock [Homer3](https://github.com/BUNPC/Homer3) v1.87.0 (data classes and processing functions; no GUIs or sample data) |
 | `external/legacy` | AtlasViewer, Homer2 and historical helpers that Homer3 does not include |
+| `external/compat` | Stand-ins for toolbox functions, used only when the toolbox is missing |
 | `research` | Research scripts and original-code comparison utilities |
 | `tests` | Numerical, integration and GUI regression checks |
 
@@ -124,7 +129,7 @@ main("validation")         % runs the validation/reporting workflow
 
 Historical simulation requires separately supplied compatible reference recordings, resting data, forward models and stimulus sequences. Set `SSDOT_SIMULATION_INPUT_ROOT` or pass explicit paths to `ssdot.simulation.runStudy(options)`. The included experimental dataset is not a replacement for these inputs.
 
-`main("validation")` runs the research reporting workflow (ST001 diagnostics, known-source simulations and optional public benchmarks); it is intentionally not part of the analysis workspace. Reports use HTML with MAT/CSV/JSON numerical outputs. External recordings require compatible models and their own usage permissions; keep downloaded datasets outside Git. Numerical agreement is distinct from physiological or anatomical validation.
+`main("validation")` runs the research reporting workflow (ST001 diagnostics, known-source simulations and optional public benchmarks); it is intentionally not part of the analysis workspace. Reports use HTML with MAT/CSV/JSON numerical outputs. External recordings require compatible models and their own usage permissions; keep downloaded datasets outside Git unless their license allows redistribution, as ds007420's does. Numerical agreement is distinct from physiological or anatomical validation.
 
 ## Development
 
@@ -136,7 +141,7 @@ assertSuccess(results);
 assert(all([results.Passed]));
 ```
 
-The suite covers the solver against a direct least-squares calculation of the physical model, ST001 against captured reference outputs, statistics, ROI rules, settings, runtime retention, and the window with synthetic results. The temporal reference was captured from the professor's pinned Homer code by [captureTestFixtures.m](research/captureTestFixtures.m), so the suite does not need that repository. GPU execution is checked in the app with **Log > Check GPU**. Full-resolution and public-data runs are research workflows (`main("validation")`), not tests.
+The suite covers the solver against a direct least-squares calculation of the physical model, ST001 against captured reference outputs, Homer3 processing in the app against ST001's stored Homer3 results, statistics, ROI rules, settings, runtime retention, and the window with synthetic results. The temporal reference was captured from the professor's pinned Homer code by [captureTestFixtures.m](research/captureTestFixtures.m), so the suite does not need that repository. GPU execution is checked in the app with **Log > Check GPU**. Full-resolution and public-data runs are research workflows (`main("validation")`), not tests.
 
 ## Reference and license
 
