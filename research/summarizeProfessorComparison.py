@@ -9,7 +9,7 @@ root = Path(__file__).resolve().parents[1]
 out = root / "results/validation/professor-original-comparison"
 synthetic = root / "results/validation/scientific-20261108-final/synthetic"
 vertices = loadmat(synthetic / "protocol.mat", simplify_cells=True)["vertices"]
-adot = loadmat(root / "ST001/fw/Adot.mat", variable_names=["Adot"])["Adot"]
+adot = loadmat(root / "datasets/ST001/fw/Adot.mat", variable_names=["Adot"])["Adot"]
 with np.errstate(divide="ignore"):
     mask = np.log10(adot[:, :, 0].sum(axis=0)) > -2
 rows = []

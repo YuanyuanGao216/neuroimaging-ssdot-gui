@@ -12,7 +12,7 @@ function report = benchmarkReconstruction(device, compareReferences)
     root = fileparts(fileparts(mfilename('fullpath')));
     addpath(fullfile(root, 'src'));
     environment = ssdot.app.initializeEnvironment(root);
-    folder = fullfile(root, 'ST001');
+    folder = fullfile(root, 'datasets', 'ST001');
     cfg = ssdot.app.defaultConfig();
     cfg.device = device;
     device = ssdot.recon.resolveDevice(device);

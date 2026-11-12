@@ -19,7 +19,7 @@ ssdot.app.initializeEnvironment(root);
 addpath(fullfile(reference, 'code'), '-begin');
 
 %% Current sensitivity and temporal basis for the first ST001 recording
-data = ssdot.validation.loadSt001(fullfile(root, 'ST001'), @(~, ~, ~) []);
+data = ssdot.validation.loadSt001(fullfile(root, 'datasets', 'ST001'), @(~, ~, ~) []);
 cfg = ssdot.app.defaultConfig();
 cfg.alpha = .01;
 cfg.beta = 0;
@@ -29,7 +29,7 @@ S = ssdot.recon.prepareSensitivity(data.rawModel, data.records(1).recording.acti
 fullT = ssdot.recon.buildTemporalBasis(data.records(1).recording, cfg);
 
 %% Original Homer temporal design on the acquired recording
-rawFiles = dir(fullfile(root, 'ST001', 'sess01', '*.snirf'));
+rawFiles = dir(fullfile(root, 'datasets', 'ST001', 'sess01', '*.snirf'));
 assert(~isempty(rawFiles), 'ST001 SNIRF not found.');
 acquired = SnirfClass(fullfile(rawFiles(1).folder, rawFiles(1).name));
 raw = acquired.data;

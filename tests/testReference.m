@@ -49,10 +49,10 @@ function testDurationBasedReconstructionMatchesCapturedBaseline(t)
     config.scalpSigma = 50;
 
     % Read the single run's stored Homer output directly instead of opening the whole dataset.
-    stored = load(fullfile(root, 'ST001', 'derivatives', 'homer', 'sess01', '2025-08-29_001.mat'), 'output');
+    stored = load(fullfile(root, 'datasets', 'ST001', 'derivatives', 'homer', 'sess01', '2025-08-29_001.mat'), 'output');
     recording = ssdot.io.readRun(struct('procStream', struct('output', stored.output)));
-    atlas = ssdot.io.loadAtlas(fullfile(root, 'ST001', 'atlasViewer.mat'));
-    sensitivity = ssdot.io.loadSensitivity(fullfile(root, 'ST001'), recording.activeMeasurements, config, atlas);
+    atlas = ssdot.io.loadAtlas(fullfile(root, 'datasets', 'ST001', 'atlasViewer.mat'));
+    sensitivity = ssdot.io.loadSensitivity(fullfile(root, 'datasets', 'ST001'), recording.activeMeasurements, config, atlas);
 
     temporal = ssdot.recon.buildTemporalBasis(recording, config);
     verifyEqual(t, temporal.T_HbO_brain, reference.temporalBasis.T_HbO_brain, 'AbsTol', 1e-14);

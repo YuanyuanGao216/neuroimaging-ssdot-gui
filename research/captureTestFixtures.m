@@ -19,7 +19,7 @@ function captureTestFixtures()
     addpath(fullfile(root, 'research', 'compat'), '-begin');
     addpath(fullfile(reference, 'code'), '-begin');
 
-    datasetRoot = fullfile(root, 'ST001');
+    datasetRoot = fullfile(root, 'datasets', 'ST001');
     group = ssdot.io.loadDataset(datasetRoot);
     runs = ssdot.io.nodeChildren(group.subjs(1).sess(1));
     config = ssdot.app.defaultConfig();

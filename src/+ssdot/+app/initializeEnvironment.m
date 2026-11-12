@@ -13,7 +13,7 @@ function environment = initializeEnvironment(root)
 
     dataRoot = string(getenv('SSDOT_DATA_ROOT'));
     if strlength(dataRoot) == 0
-        dataRoot = fullfile(root, 'ST001');
+        dataRoot = fullfile(root, 'datasets', 'ST001');
     end
 
     paths = ssdot.app.runtimePaths(root);

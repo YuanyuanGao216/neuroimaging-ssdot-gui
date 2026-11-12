@@ -29,7 +29,7 @@ if ~isfolder(folder)
 end
 
 %% Current model for the first ST001 recording
-data = ssdot.validation.loadSt001(fullfile(root, 'ST001'), @(~, ~, ~) []);
+data = ssdot.validation.loadSt001(fullfile(root, 'datasets', 'ST001'), @(~, ~, ~) []);
 cfg = ssdot.app.defaultConfig();
 p = ssdot.validation.prepareModel(data.records(1).recording, data.rawModel, data.atlas, cfg, @(~, ~, ~) []);
 S = p.sensitivity;
@@ -41,7 +41,7 @@ metrics = struct('name', {}, 'maxAbs', {}, 'relativeFrobenius', {}, 'correlation
 fprintf('Comparing original sensitivity, masks and forward operators.\n');
 measurementCount = size(p.probe.measurementList, 1);
 activity = {double(ssdot.recon.activeMeasurements(p.recording.activeMeasurements, measurementCount))};
-originalS = Get_A_dot([char(fullfile(root, 'ST001')) filesep], cfg.longSeparationThreshold, activity, false);
+originalS = Get_A_dot([char(fullfile(root, 'datasets', 'ST001')) filesep], cfg.longSeparationThreshold, activity, false);
 fprintf('Original/current channel counts: %d / %d; original missing: %s; extra: %s\n', ...
     numel(originalS.channels), numel(S.channels), ...
     mat2str(setdiff(S.channels, originalS.channels)'), mat2str(setdiff(originalS.channels, S.channels)'));

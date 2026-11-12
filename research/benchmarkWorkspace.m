@@ -4,7 +4,7 @@ function report = benchmarkWorkspace(datasetRoot)
     addpath(root);
     addpath(fullfile(root, 'src'));
     if nargin == 0
-        datasetRoot = fullfile(root, 'ST001');
+        datasetRoot = fullfile(root, 'datasets', 'ST001');
     end
 
     app = main();
