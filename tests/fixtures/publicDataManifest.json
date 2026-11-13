@@ -1,0 +1,73 @@
+{
+  "dataset": "ds007420",
+  "openNeuroVersion": "1.0.2",
+  "nemarVersion": "1.0.0",
+  "doi": "10.18112/openneuro.ds007420.v1.0.2",
+  "manifestUrl": "https://data.nemar.org/on007420/v1.0.0/manifest.json",
+  "files": [
+    {
+      "path": "dataset_description.json",
+      "size": 2229,
+      "checksum_algorithm": "git",
+      "checksum": "d5eec144a199dd020aec0baf5ed0769a4d1521bd",
+      "bytes_url": "https://data.nemar.org/on007420/v1.0.0/dataset_description.json",
+      "url": "https://data.nemar.org/on007420/v1.0.0/dataset_description.json"
+    },
+    {
+      "path": "participants.tsv",
+      "size": 110,
+      "checksum_algorithm": "git",
+      "checksum": "00eaca18841e5a7c193fd0cce17286700d0f3564",
+      "bytes_url": "https://data.nemar.org/on007420/v1.0.0/participants.tsv",
+      "url": "https://data.nemar.org/on007420/v1.0.0/participants.tsv"
+    },
+    {
+      "path": "sourcedata/probe_bilateral.sd",
+      "size": 1628,
+      "checksum_algorithm": "sha256",
+      "checksum": "e5e5a34fc550bd7a233e0bdd94ea2435cd9ffe238dec32e908918362d750d384",
+      "bytes_url": "https://data.nemar.org/on007420/v1.0.0/sourcedata/probe_bilateral.sd",
+      "url": "https://data.nemar.org/on007420/v1.0.0/sourcedata/probe_bilateral.sd"
+    },
+    {
+      "path": "sub-170/ses-01/nirs/sub-170_ses-01_task-Resting_nirs.snirf",
+      "size": 6979187,
+      "checksum_algorithm": "sha256",
+      "checksum": "a8b6b1c8139eefc6dc8dea47848da4c7c4d475909b23cd838963202df4a2767f",
+      "bytes_url": "https://data.nemar.org/on007420/v1.0.0/sub-170/ses-01/nirs/sub-170_ses-01_task-Resting_nirs.snirf",
+      "url": "https://data.nemar.org/on007420/v1.0.0/sub-170/ses-01/nirs/sub-170_ses-01_task-Resting_nirs.snirf"
+    },
+    {
+      "path": "sub-170/ses-02/nirs/sub-170_ses-02_task-BallSqueezing_run-01_events.tsv",
+      "size": 871,
+      "checksum_algorithm": "git",
+      "checksum": "89364692d467da8d1243afdcbe36510af93024c7",
+      "bytes_url": "https://data.nemar.org/on007420/v1.0.0/sub-170/ses-02/nirs/sub-170_ses-02_task-BallSqueezing_run-01_events.tsv",
+      "url": "https://data.nemar.org/on007420/v1.0.0/sub-170/ses-02/nirs/sub-170_ses-02_task-BallSqueezing_run-01_events.tsv"
+    },
+    {
+      "path": "sub-170/ses-02/nirs/sub-170_ses-02_task-BallSqueezing_run-01_nirs.snirf",
+      "size": 10446740,
+      "checksum_algorithm": "sha256",
+      "checksum": "30915733d2a2e489e0af5c12aca749d476cbaf3936e5202dcc14deadc01bfd21",
+      "bytes_url": "https://data.nemar.org/on007420/v1.0.0/sub-170/ses-02/nirs/sub-170_ses-02_task-BallSqueezing_run-01_nirs.snirf",
+      "url": "https://data.nemar.org/on007420/v1.0.0/sub-170/ses-02/nirs/sub-170_ses-02_task-BallSqueezing_run-01_nirs.snirf"
+    },
+    {
+      "path": "sub-170/ses-03/nirs/sub-170_ses-03_task-Motion_nirs.snirf",
+      "size": 10335858,
+      "checksum_algorithm": "sha256",
+      "checksum": "b4a8af740b30263f08d5b85d8d8bd3a4ad7adfdf0643f134c55e50818d18609e",
+      "bytes_url": "https://data.nemar.org/on007420/v1.0.0/sub-170/ses-03/nirs/sub-170_ses-03_task-Motion_nirs.snirf",
+      "url": "https://data.nemar.org/on007420/v1.0.0/sub-170/ses-03/nirs/sub-170_ses-03_task-Motion_nirs.snirf"
+    },
+    {
+      "path": "sub-179/ses-01/nirs/sub-179_ses-01_task-Rest_nirs.snirf",
+      "size": 7280222,
+      "checksum_algorithm": "sha256",
+      "checksum": "83ba5a5b74627a2e2e90eff132eceaea9a8103e2c42be70d96b6ab91b036303e",
+      "bytes_url": "https://data.nemar.org/on007420/v1.0.0/sub-179/ses-01/nirs/sub-179_ses-01_task-Rest_nirs.snirf",
+      "url": "https://data.nemar.org/on007420/v1.0.0/sub-179/ses-01/nirs/sub-179_ses-01_task-Rest_nirs.snirf"
+    }
+  ]
+}
