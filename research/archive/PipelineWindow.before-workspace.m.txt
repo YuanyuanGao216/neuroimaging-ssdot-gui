@@ -1,0 +1,84 @@
+classdef PipelineWindow < handle
+    %PIPELINEWINDOW A view of the per-run reconstruction stages and configuration.
+    properties
+        figure
+        controller
+        state
+        status
+        controls = struct()
+    end
+    methods
+        function obj = PipelineWindow(controller, state)
+            obj.controller = controller; obj.state = state;
+            obj.figure = uifigure('Name','SS-DOT: '+state.nodeName,'Position',[160 120 850 670]);
+            grid = uigridlayout(obj.figure,[1 2]); grid.ColumnWidth = {'1x','1x'};
+            steps = uigridlayout(grid,[13 1]);
+            obj.addButton(steps,'1. Load atlas',@()controller.loadAtlas(state));
+            obj.addButton(steps,'Display registered probe',@()controller.showProbe(state));
+            obj.addButton(steps,'2. Load sensitivity',@()controller.loadSensitivity(state));
+            obj.addButton(steps,'Display brain sensitivity',@()controller.showSensitivity(state,false));
+            obj.addButton(steps,'Display scalp sensitivity',@()controller.showSensitivity(state,true));
+            obj.addButton(steps,'3. Generate spatial bases',@()controller.generateSpatial(state));
+            obj.addButton(steps,'Display spatial kernels',@()controller.showKernels(state));
+            obj.addButton(steps,'4. Prepare temporal bases',@()obj.temporalPreview());
+            obj.addButton(steps,'5. Prepare optical density',@()controller.prepareObservations(state));
+            obj.addButton(steps,'6. Reconstruct',@()controller.runReconstruction(state));
+            obj.addButton(steps,'Display reconstruction',@()controller.showResult(state));
+            obj.addButton(steps,'ROI viewer (single or comparison)',@()controller.openRoiViewer(state));
+            obj.status = uilabel(steps,'Text','Load an atlas to begin.','WordWrap','on');
+            fields = ["brainSamplingThreshold","scalpSamplingThreshold","brainSigma","scalpSigma", ...
+                "sensitivityThreshold","longSeparationThreshold","shortSeparationThreshold","driftOrder","alpha","beta"];
+            labels = {'Brain sampling threshold','Scalp sampling threshold','Brain kernel sigma','Scalp kernel sigma', ...
+                'Log10 sensitivity threshold','Long-channel minimum (mm)','Short-channel maximum (mm)','Drift order','Alpha','Beta'};
+            options = uigridlayout(grid,[14 2]); options.ColumnWidth = {'1x',110};
+            for index = 1:numel(fields)
+                uilabel(options,'Text',labels{index});
+                field = fields(index);
+                obj.controls.(field) = uieditfield(options,'numeric','Value',state.config.(field), ...
+                    'ValueChangedFcn',@(source,~)obj.setOption(field,source.Value));
+            end
+            uilabel(options,'Text','Spatial regularization');
+            obj.controls.spatialRegularization = uicheckbox(options,'Text','','Value',state.config.spatialRegularization, ...
+                'ValueChangedFcn',@(source,~)obj.setOption('spatialRegularization',source.Value));
+            uilabel(options,'Text','Regularization');
+            obj.controls.regularization = uidropdown(options,'Items',{'Standard','Noise weighted','Truncated SVD'},'ItemsData',[1 2 3], ...
+                'Value',state.config.regularization,'ValueChangedFcn',@(source,~)obj.setOption('regularization',source.Value));
+            uilabel(options,'Text','Computation');
+            obj.controls.device = uidropdown(options,'Items',{'cpu','gpu'},'Value',char(state.config.device), ...
+                'ValueChangedFcn',@(source,~)obj.setOption('device',string(ssdot.recon.resolveDevice(source.Value))));
+        end
+        function addButton(obj, parent, label, action)
+            uibutton(parent,'Text',label,'ButtonPushedFcn',@(~,~)obj.invoke(action));
+        end
+        function invoke(obj, action)
+            obj.controller.perform(@()obj.runAction(action));
+        end
+        function runAction(obj, action)
+            action();
+            obj.status.Text = 'Completed. Dependent stages are invalidated when their inputs change.';
+        end
+        function setOption(obj, field, value)
+            config = obj.state.config; config.(field) = value;
+            obj.state.applyConfig(config);
+            obj.controller.refreshStateViews(obj.state);
+            obj.status.Text = 'Configuration updated. Recompute invalidated stages.';
+        end
+        function refreshConfiguration(obj)
+            names = fieldnames(obj.controls);
+            for index = 1:numel(names)
+                name = names{index}; value = obj.state.config.(name);
+                if strcmp(name,'device'), value = char(value); end
+                obj.controls.(name).Value = value;
+            end
+        end
+        function temporalPreview(obj)
+            obj.controller.prepareTemporal(obj.state);
+            fig = figure('Name','Temporal basis');
+            addlistener(obj.figure,'ObjectBeingDestroyed',@(~,~)delete(fig));
+            plot(obj.state.temporalBasis.T_HbO_brain); xlabel('Sample'); ylabel('Basis amplitude');
+        end
+        function delete(obj)
+            if ~isempty(obj.figure) && isvalid(obj.figure), delete(obj.figure); end
+        end
+    end
+end

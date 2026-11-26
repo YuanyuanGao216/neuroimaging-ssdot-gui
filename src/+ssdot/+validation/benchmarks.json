@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "cedalionCommit": "c463978a799e843dfde0631500336948cbdd63ee",
+  "cedalionRelease": "26.5.1",
+  "neurodotCommit": "734787e22e25da9f49a4d9aae2ebb9cf30dc3a66",
+  "assets": [
+    {"folder":"cedalion","name":"fingertappingDOT.zip","url":"https://doc.ibs.tu-berlin.de/cedalion/datasets/26.5.1/fingertappingDOT.zip","algorithm":"sha256","checksum":"03e620479bd48aea8457050b7ce42e0c73ef5448296272448b54cee0e883853e"},
+    {"folder":"cedalion","name":"sensitivity_fingertappingDOT_colin27.nc","url":"https://doc.ibs.tu-berlin.de/cedalion/datasets/26.5.1/sensitivity_fingertappingDOT_colin27.nc","algorithm":"sha256","checksum":"0cf9f3b9ec84ed3833ad544555629059f447c2e8836f045c6dac871bdaf933e7"},
+    {"folder":"cedalion","name":"hm_colin27.zip","url":"https://doc.ibs.tu-berlin.de/cedalion/datasets/26.5.1/hm_colin27.zip","algorithm":"sha256","checksum":"481aed79d9542d96b62b182cb624176108464933faf8cc7be2877cdc9a914c39"},
+    {"folder":"neurodot","name":"Tikhonov_invert_Amat.m","url":"https://raw.githubusercontent.com/WUSTL-ORL/NeuroDOT/734787e22e25da9f49a4d9aae2ebb9cf30dc3a66/Functions/Reconstruction/Tikhonov_invert_Amat.m","algorithm":"git","checksum":"79a44f3f5137c200a27c7d2939f2b313f266b824"},
+    {"folder":"neurodot","name":"spectroscopy_img.m","url":"https://raw.githubusercontent.com/WUSTL-ORL/NeuroDOT/734787e22e25da9f49a4d9aae2ebb9cf30dc3a66/Functions/Reconstruction/spectroscopy_img.m","algorithm":"git","checksum":"4af993331db29c89f7d4510f54bc8c062262cd82"},
+    {"folder":"neurodot","name":"license.txt","url":"https://raw.githubusercontent.com/WUSTL-ORL/NeuroDOT/734787e22e25da9f49a4d9aae2ebb9cf30dc3a66/license.txt","algorithm":"git","checksum":"cadbb9acf4123d2096112c0a062fc48ad4789fa9"}
+  ],
+  "conditionNames": ["Control","Finger tapping - left hand","Finger tapping - right hand","Ball squeezing - left hand","Ball squeezing - right hand"],
+  "conditionSource":"https://github.com/ibs-lab/cedalion/blob/c463978a799e843dfde0631500336948cbdd63ee/examples/tutorial/5_image_reconstruction.ipynb",
+  "preprocessing":"Natural-log OD; fourth-order zero-phase Butterworth 0.01-0.5 Hz; SNR>=5, source-detector 5-45 mm; tutorial bad channels S13D26 and S14D28 excluded. Shared by all comparator methods. This is not the full Cedalion motion-correction tutorial.",
+  "reference":"Unmodified NeuroDOT Tikhonov_invert_Amat, lambda1=0.01, lambda2=0.1; spectroscopy_img receives extinction coefficients in mm^-1/mM and returns micromolar. Sequential SS+drift regression is refitted before inversion. No vendor code is redistributed."
+}

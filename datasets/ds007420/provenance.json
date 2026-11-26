@@ -1,0 +1,10 @@
+{
+  "dataset": "OpenNeuro ds007420 v1.0.2 (Gao et al.), CC0",
+  "recordings": 36,
+  "forwardModel": "results/experiments/phase5-public-gao-20261110/model/nominal/forward-model.mat",
+  "forwardModelSha256": "40ac926d779f22c2fa9bd6b12fe978debfb0fcfc26f3158e0e68451ea6478c3b",
+  "probe": "SNIRF probe positions replaced by the forward model's registered positions (mm)",
+  "processing": "None stored; the app processes the recordings with Homer3 when the dataset is opened",
+  "builtBy": "research/buildPublicDataset.m",
+  "builtOn": "2026-11-11"
+}
